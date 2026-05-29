@@ -1,0 +1,50 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  @apply bg-paper text-ink antialiased;
+  font-feature-settings: "ss01", "cv01";
+}
+
+/* Thin, unobtrusive scrollbars for the breadcrumb trail. */
+.trail-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: theme("colors.ink.faint") transparent;
+}
+.trail-scroll::-webkit-scrollbar {
+  height: 6px;
+}
+.trail-scroll::-webkit-scrollbar-thumb {
+  background: theme("colors.ink.faint");
+  border-radius: 9999px;
+}
+
+/* The "what you missed" node gets a slow, faint breathing glow. */
+@keyframes tapsa-breathe {
+  0%,
+  100% {
+    box-shadow: 0 0 0 1px rgba(201, 97, 47, 0.3), 0 0 18px rgba(201, 97, 47, 0.16);
+  }
+  50% {
+    box-shadow: 0 0 0 1px rgba(201, 97, 47, 0.5), 0 0 34px rgba(201, 97, 47, 0.3);
+  }
+}
+.surprising-glow {
+  animation: tapsa-breathe 4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .surprising-glow {
+    animation: none;
+  }
+}
