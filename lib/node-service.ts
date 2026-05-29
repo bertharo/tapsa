@@ -217,6 +217,8 @@ async function createSectionNode(
     slug: selfSlug,
     title: match.line,
     summary,
+    // The section's own body text is the "longer read" for section nodes.
+    lead: text || summary,
     sourceUrl: `https://en.wikipedia.org/wiki/${encodeURIComponent(
       parent.title.replace(/\s+/g, "_"),
     )}#${match.anchor}`,

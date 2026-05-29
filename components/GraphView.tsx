@@ -42,10 +42,12 @@ export default function GraphView({
   node,
   loadingSlug,
   onTravel,
+  onRead,
 }: {
   node: TapsaNode;
   loadingSlug: string | null;
   onTravel: (conn: Connection) => void;
+  onRead?: () => void;
 }) {
   const isMobile = useIsMobile();
   const connections = node.connections;
@@ -61,12 +63,24 @@ export default function GraphView({
         loadingSlug={loadingSlug}
         onTravel={onTravel}
         onDeeper={goDeeper}
+        onRead={onRead}
       />
     );
   }
 
   return (
     <LayoutGroup>
+      {onRead && (
+        <div className="mb-1 flex justify-center">
+          <button
+            type="button"
+            onClick={onRead}
+            className="inline-flex items-center gap-1.5 rounded-full border border-ink/10 bg-white px-4 py-1.5 text-sm font-medium text-ink-soft shadow-sm transition hover:border-accent/40 hover:text-ink"
+          >
+            <span className="transition-transform">←</span> Back to summary
+          </button>
+        </div>
+      )}
       <div className="relative mx-auto h-[clamp(560px,80vh,800px)] w-full max-w-5xl">
         {/* Connecting lines layer (re-drawn per center). */}
         <AnimatePresence>
@@ -299,14 +313,27 @@ function MobileList({
   loadingSlug,
   onTravel,
   onDeeper,
+  onRead,
 }: {
   node: TapsaNode;
   loadingSlug: string | null;
   onTravel: (conn: Connection) => void;
   onDeeper: (section: SectionRef) => void;
+  onRead?: () => void;
 }) {
   return (
     <div className="mx-auto w-full max-w-md">
+      {onRead && (
+        <div className="mb-3 flex justify-center">
+          <button
+            type="button"
+            onClick={onRead}
+            className="inline-flex items-center gap-1.5 rounded-full border border-ink/10 bg-white px-4 py-1.5 text-sm font-medium text-ink-soft shadow-sm transition hover:border-accent/40 hover:text-ink"
+          >
+            ← Back to summary
+          </button>
+        </div>
+      )}
       <motion.div
         key={node.slug}
         initial={{ opacity: 0, y: 8 }}

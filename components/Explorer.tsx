@@ -5,10 +5,12 @@ import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import type { Connection, TapsaNode } from "@/lib/types";
 import GraphView from "./GraphView";
+import ReadingView from "./ReadingView";
 import Breadcrumb, { type Crumb } from "./Breadcrumb";
 import { buildShareUrl } from "@/lib/trail";
 
 type FetchState = { node?: TapsaNode; error?: string };
+type ViewMode = "read" | "explore";
 
 async function fetchNode(slug: string): Promise<FetchState> {
   try {
@@ -41,6 +43,9 @@ export default function Explorer({
   const [loadingSlug, setLoadingSlug] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  // Reading-first: every topic opens as a readable summary; the graph of
+  // connections is revealed only when the user chooses to explore.
+  const [mode, setMode] = useState<ViewMode>("read");
 
   const syncUrl = useCallback((slug: string, trailSlugs: string[]) => {
     if (typeof window === "undefined") return;
@@ -76,6 +81,7 @@ export default function Explorer({
       });
       setCurrentIndex((i) => i + 1);
       setCurrentNode(resolved);
+      setMode("read");
       setLoadingSlug(null);
     },
     [currentIndex, loadingSlug, syncUrl],
@@ -103,6 +109,7 @@ export default function Explorer({
       }
       setCurrentIndex(index);
       setCurrentNode(node);
+      setMode("read");
       syncUrl(target.slug, crumbs.slice(0, index + 1).map((c) => c.slug));
     },
     [crumbs, currentIndex, loadingSlug, syncUrl],
@@ -176,7 +183,20 @@ export default function Explorer({
       </AnimatePresence>
 
       <div className="flex flex-1 items-center justify-center py-4">
-        <GraphView node={currentNode} loadingSlug={loadingSlug} onTravel={travel} />
+        {mode === "read" ? (
+          <ReadingView
+            node={currentNode}
+            onTravel={travel}
+            onExplore={() => setMode("explore")}
+          />
+        ) : (
+          <GraphView
+            node={currentNode}
+            loadingSlug={loadingSlug}
+            onTravel={travel}
+            onRead={() => setMode("read")}
+          />
+        )}
       </div>
     </main>
   );

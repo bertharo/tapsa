@@ -1,6 +1,6 @@
 export type Domain = "science" | "history";
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export type Connection = {
   /** Canonical slug of the target node. Always sourced from a real Wikipedia link. */
@@ -22,8 +22,14 @@ export type SectionRef = {
 export type TapsaNode = {
   slug: string;
   title: string;
-  /** LLM-rewritten, grounded in the Wikipedia summary. */
+  /** LLM-rewritten, grounded in the Wikipedia summary. The tight teaser. */
   summary: string;
+  /**
+   * Longer readable body for the reading view: the article's full lead/intro
+   * (several paragraphs) for article nodes, or the section's body text for
+   * section nodes. Plain text with paragraphs separated by "\n\n".
+   */
+  lead?: string;
   /** Wikipedia URL, shown for trust. */
   sourceUrl: string;
   domain: Domain;
@@ -55,6 +61,8 @@ export type Grounding = {
   slug: string;
   title: string;
   summary: string;
+  /** Full Wikipedia lead/intro (several paragraphs) for the reading view. */
+  lead?: string;
   sourceUrl: string;
   candidates: CandidateLink[];
 };

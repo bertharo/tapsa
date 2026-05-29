@@ -91,6 +91,43 @@ async function fetchSummary(slug: string): Promise<WikiSummary> {
   throw new TopicNotFoundError(slug);
 }
 
+/**
+ * Full lead/intro section of an article as plain text (several paragraphs).
+ * Powers the reading view; falls back to "" so the short summary still shows.
+ */
+async function fetchLeadExtract(title: string): Promise<string> {
+  const params = new URLSearchParams({
+    action: "query",
+    format: "json",
+    prop: "extracts",
+    exintro: "1",
+    explaintext: "1",
+    redirects: "1",
+    titles: title,
+    origin: "*",
+  });
+  try {
+    const res = await fetch(`${WIKI_ACTION}?${params.toString()}`, {
+      headers: HEADERS,
+      next: { revalidate: 60 * 60 * 24 },
+    });
+    if (!res.ok) return "";
+    const data = (await res.json()) as {
+      query?: { pages?: Record<string, { extract?: string }> };
+    };
+    const pages = data.query?.pages ?? {};
+    const extract = Object.values(pages)[0]?.extract ?? "";
+    // Normalize whitespace but preserve paragraph breaks.
+    return extract
+      .replace(/\r/g, "")
+      .replace(/[ \t]+\n/g, "\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+  } catch {
+    return "";
+  }
+}
+
 type ActionLinksResponse = {
   query?: {
     pages?: Record<
@@ -203,9 +240,10 @@ export async function fetchGrounding(slug: string): Promise<Grounding> {
   const canonicalTitle = summary.title;
   const canonicalSlug = titleToSlug(canonicalTitle);
 
-  const [related, outgoing] = await Promise.all([
+  const [related, outgoing, lead] = await Promise.all([
     fetchRelated(canonicalTitle),
     fetchOutgoingLinks(canonicalTitle),
+    fetchLeadExtract(canonicalTitle),
   ]);
 
   // Related first (higher quality), then outgoing to fill the pool.
@@ -224,6 +262,8 @@ export async function fetchGrounding(slug: string): Promise<Grounding> {
     slug: canonicalSlug,
     title: canonicalTitle,
     summary: summary.extract,
+    // Prefer the fuller lead; fall back to the short extract for the reading view.
+    lead: lead || summary.extract,
     sourceUrl,
     candidates,
   };
@@ -312,7 +352,8 @@ export async function fetchSectionExtract(title: string, index: string): Promise
   if (!res.ok) return "";
   const data = (await res.json()) as { parse?: { text?: { "*"?: string } } };
   const html = data.parse?.text?.["*"] ?? "";
-  return stripHtml(html).slice(0, 2000);
+  // Generous cap: this text feeds both the LLM rewrite and the reading view.
+  return stripHtml(html).slice(0, 4000);
 }
 
 /** Crude but effective HTML → text for section bodies. */
