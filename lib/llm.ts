@@ -1,18 +1,35 @@
-import Anthropic from "@anthropic-ai/sdk";
+import OpenAI from "openai";
 import { z } from "zod";
 import type { Connection, Domain, Grounding, TapsaNode } from "./types";
 import { SCHEMA_VERSION } from "./types";
 
-const MODEL = process.env.TAPSA_MODEL ?? "claude-3-5-sonnet-latest";
+/**
+ * Model layer. Talks to any OpenAI-compatible endpoint; defaults to Groq
+ * (fast, cheap open-model inference). Swap the provider entirely via env:
+ *   TAPSA_LLM_BASE_URL, TAPSA_MODEL, and GROQ_API_KEY (or TAPSA_LLM_API_KEY).
+ *
+ * Env is read at call time (not module load) so batch scripts that load
+ * .env.local after importing this module still pick up the configuration.
+ */
+const DEFAULT_BASE_URL = "https://api.groq.com/openai/v1";
+const DEFAULT_MODEL = "llama-3.3-70b-versatile";
 const MIN_CONNECTIONS = 3;
 const MAX_CONNECTIONS = 6;
+
+function llmConfig() {
+  return {
+    baseURL: process.env.TAPSA_LLM_BASE_URL ?? DEFAULT_BASE_URL,
+    model: process.env.TAPSA_MODEL ?? DEFAULT_MODEL,
+    apiKey: process.env.GROQ_API_KEY ?? process.env.TAPSA_LLM_API_KEY ?? "",
+  };
+}
 
 const SYSTEM_PROMPT = `You are the connection engine for Tapsa, a knowledge-exploration tool. \
 You receive a topic, its factual summary, and a list of candidate related topics (all real Wikipedia pages). \
 Your job:
 1. Rewrite the summary into 2-3 tight, confident sentences. No hedging, no "is a term that", no filler. Encyclopedic but modern.
 2. Select the ${MIN_CONNECTIONS}-${MAX_CONNECTIONS} MOST INTERESTING connections, strongly favoring non-obvious, intellectually surprising links over generic or purely categorical ones.
-3. Write a one-line rationale for each connection: the specific reason this link is worth exploring ("why this connects"). Be concrete, not vague.
+3. Write a punchy one-line rationale for each connection (max ~14 words): the specific, concrete reason this link is worth exploring. Start with the substance — NEVER with filler like "This connection is worth exploring because" or "X is relevant because". No restating the obvious.
 4. Mark EXACTLY ONE connection as "surprising": true — the adjacent idea most curious people wouldn't think to explore from this topic. It should reward the click.
 
 Hard rules:
@@ -131,28 +148,25 @@ function trimToSentences(text: string, max: number): string {
   return sentences.slice(0, max).join(" ").trim();
 }
 
-async function generateWithAnthropic(
-  g: Grounding,
-  domain: Domain,
-): Promise<TapsaNode> {
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+async function generateWithLLM(g: Grounding, domain: Domain): Promise<TapsaNode> {
+  const { apiKey, baseURL, model } = llmConfig();
+  const client = new OpenAI({ apiKey, baseURL });
   const userMessage = buildUserMessage(g);
 
   const attempt = async (extra?: string) => {
-    const resp = await client.messages.create({
-      model: MODEL,
+    const resp = await client.chat.completions.create({
+      model,
       max_tokens: 1024,
       // Low-ish: factual rewrite must be tight; selection still has room to vary.
       temperature: 0.6,
-      system: SYSTEM_PROMPT,
+      // Native JSON mode — more reliable than prompt-only, supported by Groq.
+      response_format: { type: "json_object" },
       messages: [
+        { role: "system", content: SYSTEM_PROMPT },
         { role: "user", content: extra ? `${userMessage}\n\n${extra}` : userMessage },
       ],
     });
-    const text = resp.content
-      .filter((b): b is Anthropic.TextBlock => b.type === "text")
-      .map((b) => b.text)
-      .join("");
+    const text = resp.choices[0]?.message?.content ?? "";
     return llmOutputSchema.parse(JSON.parse(extractJson(text)));
   };
 
@@ -196,16 +210,16 @@ async function generateWithAnthropic(
   };
 }
 
-/** Generate a Tapsa node from grounding. Uses Claude if configured, else falls back. */
+/** Generate a Tapsa node from grounding. Uses the LLM if a key is configured, else falls back. */
 export async function generateNode(
   g: Grounding,
   domain: Domain,
 ): Promise<TapsaNode> {
-  if (!process.env.ANTHROPIC_API_KEY) {
+  if (!llmConfig().apiKey) {
     return fallbackGenerate(g, domain);
   }
   try {
-    return await generateWithAnthropic(g, domain);
+    return await generateWithLLM(g, domain);
   } catch (err) {
     console.error("[tapsa] LLM generation failed, using fallback:", err);
     return fallbackGenerate(g, domain);

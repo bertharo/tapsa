@@ -23,10 +23,10 @@ for (const file of [".env.local", ".env"]) {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function main() {
-  const usingLlm = Boolean(process.env.ANTHROPIC_API_KEY);
+  const usingLlm = Boolean(process.env.GROQ_API_KEY ?? process.env.TAPSA_LLM_API_KEY);
   console.log(
     `[prebake] Generating ${PREBAKE_SEEDS.length} seed nodes ` +
-      `(${usingLlm ? "Claude" : "fallback heuristic — set ANTHROPIC_API_KEY for real selection"}).`,
+      `(${usingLlm ? "LLM" : "fallback heuristic — set GROQ_API_KEY for real selection"}).`,
   );
 
   let ok = 0;

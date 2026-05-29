@@ -13,7 +13,7 @@ concepts you didn't know to ask about. No account, no ads.
 - **Next.js 14** (App Router) + **TypeScript** on Vercel
 - **Tailwind CSS** — near-monochrome, type-led, one accent
 - **framer-motion** — spring-based re-centering (the "magic" moment) + mobile collapse
-- **Anthropic Claude** — connection selection + voice (forced JSON, schema-validated)
+- **Groq** (OpenAI-compatible, open models) — connection selection + voice (JSON mode, schema-validated). Repoint to any OpenAI-compatible provider via env.
 - **Wikipedia REST + Action API** — factual grounding & the real link graph
 - **Pluggable node store** — filesystem by default; swap for Postgres/KV in prod
 
@@ -48,14 +48,14 @@ Key files:
 
 ```bash
 npm install
-cp .env.example .env.local   # add ANTHROPIC_API_KEY (optional but recommended)
+cp .env.example .env.local   # add GROQ_API_KEY (optional but recommended)
 npm run dev
 ```
 
 Open http://localhost:3000.
 
 **Without an API key** the app still runs end-to-end — connections are chosen by
-a heuristic fallback instead of the LLM. Add `ANTHROPIC_API_KEY` to get the real
+a heuristic fallback instead of the LLM. Add `GROQ_API_KEY` to get the real
 "most interesting / what you missed" selection that is the whole differentiation.
 
 ### Pre-bake common topics
