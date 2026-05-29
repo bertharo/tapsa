@@ -94,7 +94,7 @@ export default function SearchField({ autoFocus = true }: { autoFocus?: boolean 
           }}
           placeholder="What are you curious about?"
           aria-label="Search a topic in science or history"
-          className="w-full rounded-2xl border border-ink/10 bg-white px-5 py-4 text-lg text-ink shadow-node outline-none transition placeholder:text-ink-faint focus:border-accent/40 focus:shadow-glow md:text-xl"
+          className="w-full rounded-2xl border border-ink/10 bg-white py-4 pl-5 pr-28 text-lg text-ink shadow-node outline-none transition placeholder:text-ink-faint focus:border-accent/40 focus:shadow-glow md:text-xl"
         />
         <button
           type="submit"
