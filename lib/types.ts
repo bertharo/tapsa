@@ -1,6 +1,6 @@
 export type Domain = "science" | "history";
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 5;
 
 export type Connection = {
   /** Canonical slug of the target node. Always sourced from a real Wikipedia link. */

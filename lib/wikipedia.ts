@@ -135,35 +135,177 @@ type ActionLinksResponse = {
       { title?: string; links?: { ns: number; title: string }[] }
     >;
   };
+  continue?: { plcontinue?: string };
 };
 
-/** Outgoing article links (namespace 0) for a title via the Action API. */
-async function fetchOutgoingLinks(title: string): Promise<CandidateLink[]> {
+/**
+ * Outgoing article links (namespace 0) for a title via the Action API, paged so
+ * we see the WHOLE link set — not just the alphabetical first slice. This is
+ * what lets popularity ranking surface a famous link (e.g. Michael Jordan from
+ * NBA) that would otherwise sit far down the alphabet.
+ */
+async function fetchOutgoingLinks(title: string, maxLinks = 1500): Promise<CandidateLink[]> {
+  const links: CandidateLink[] = [];
+  let plcontinue: string | undefined;
+  for (let page = 0; page < 4 && links.length < maxLinks; page++) {
+    const params = new URLSearchParams({
+      action: "query",
+      format: "json",
+      prop: "links",
+      titles: title,
+      plnamespace: "0",
+      pllimit: "max",
+      redirects: "1",
+      origin: "*",
+    });
+    if (plcontinue) params.set("plcontinue", plcontinue);
+    const res = await fetch(`${WIKI_ACTION}?${params.toString()}`, {
+      headers: HEADERS,
+      next: { revalidate: 60 * 60 * 24 },
+    });
+    if (!res.ok) break;
+    const data = (await res.json()) as ActionLinksResponse;
+    for (const p of Object.values(data.query?.pages ?? {})) {
+      for (const link of p.links ?? []) {
+        if (link.ns === 0) links.push({ slug: titleToSlug(link.title), title: link.title });
+      }
+    }
+    plcontinue = data.continue?.plcontinue;
+    if (!plcontinue) break;
+  }
+  return links;
+}
+
+/**
+ * Re-order candidates by recent Wikipedia pageviews (popularity). Topics are
+ * batched (50 titles/request) so this is a handful of parallel calls regardless
+ * of pool size. Unknown/zero-view pages keep their relative order at the back.
+ */
+async function rankByPageviews(cands: CandidateLink[]): Promise<CandidateLink[]> {
+  if (cands.length <= 1) return cands;
+  const views = new Map<string, number>();
+  const batches: CandidateLink[][] = [];
+  for (let i = 0; i < cands.length; i += 50) batches.push(cands.slice(i, i + 50));
+
+  await Promise.all(
+    batches.map(async (batch) => {
+      const params = new URLSearchParams({
+        action: "query",
+        format: "json",
+        prop: "pageviews",
+        pvipdays: "30",
+        titles: batch.map((c) => c.title).join("|"),
+        redirects: "1",
+        origin: "*",
+      });
+      try {
+        const res = await fetch(`${WIKI_ACTION}?${params.toString()}`, {
+          headers: HEADERS,
+          next: { revalidate: 60 * 60 * 24 },
+        });
+        if (!res.ok) return;
+        const data = (await res.json()) as {
+          query?: {
+            pages?: Record<string, { title?: string; pageviews?: Record<string, number | null> }>;
+          };
+        };
+        for (const p of Object.values(data.query?.pages ?? {})) {
+          if (!p.title) continue;
+          const total = Object.values(p.pageviews ?? {}).reduce<number>(
+            (n, v) => n + (v ?? 0),
+            0,
+          );
+          views.set(titleToSlug(p.title), total);
+        }
+      } catch {
+        /* ignore a failed batch; those candidates just rank as 0 */
+      }
+    }),
+  );
+
+  return cands
+    .map((c, i) => ({ c, i }))
+    .sort((a, b) => {
+      const dv = (views.get(b.c.slug) ?? 0) - (views.get(a.c.slug) ?? 0);
+      return dv !== 0 ? dv : a.i - b.i; // stable for ties / unknowns
+    })
+    .map((x) => x.c);
+}
+
+/**
+ * Links inside the article's intro/lead section. These are the editorially
+ * chosen "most important" links (key people, places, sub-topics) and are far
+ * higher quality than the full alphabetical link dump.
+ */
+async function fetchIntroLinks(title: string): Promise<CandidateLink[]> {
   const params = new URLSearchParams({
-    action: "query",
+    action: "parse",
     format: "json",
-    prop: "links",
-    titles: title,
-    plnamespace: "0",
-    pllimit: "200",
+    prop: "text",
+    section: "0",
+    page: title,
     redirects: "1",
     origin: "*",
   });
-  const res = await fetch(`${WIKI_ACTION}?${params.toString()}`, {
-    headers: HEADERS,
-    next: { revalidate: 60 * 60 * 24 },
-  });
-  if (!res.ok) return [];
-  const data = (await res.json()) as ActionLinksResponse;
-  const pages = data.query?.pages ?? {};
-  const links: CandidateLink[] = [];
-  for (const page of Object.values(pages)) {
-    for (const link of page.links ?? []) {
-      if (link.ns !== 0) continue;
-      links.push({ slug: titleToSlug(link.title), title: link.title });
+  try {
+    const res = await fetch(`${WIKI_ACTION}?${params.toString()}`, {
+      headers: HEADERS,
+      next: { revalidate: 60 * 60 * 24 },
+    });
+    if (!res.ok) return [];
+    const data = (await res.json()) as { parse?: { text?: { "*"?: string } } };
+    const html = data.parse?.text?.["*"] ?? "";
+    const out: CandidateLink[] = [];
+    const seen = new Set<string>();
+    // /wiki/<title> hrefs; the [^"#:] class skips anchors and namespaced
+    // (File:, Help:, Category:…) links, which always contain a colon.
+    const re = /<a href="\/wiki\/([^"#:]+)"/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(html))) {
+      const linkTitle = decodeURIComponent(m[1]).replace(/_/g, " ");
+      const slug = titleToSlug(linkTitle);
+      if (!slug || seen.has(slug)) continue;
+      seen.add(slug);
+      out.push({ slug, title: linkTitle });
     }
+    return out;
+  } catch {
+    return [];
   }
-  return links;
+}
+
+type SearchResponse = { query?: { search?: { title: string }[] } };
+
+/**
+ * Relevance-ranked "more like this" articles via CirrusSearch. This is the most
+ * reliable source of semantically related topics (the REST related endpoint is
+ * frequently empty), so it anchors the candidate pool with meaningful links.
+ */
+async function fetchMoreLike(title: string): Promise<CandidateLink[]> {
+  const params = new URLSearchParams({
+    action: "query",
+    format: "json",
+    list: "search",
+    srsearch: `morelike:${title}`,
+    srlimit: "20",
+    srnamespace: "0",
+    srprop: "",
+    origin: "*",
+  });
+  try {
+    const res = await fetch(`${WIKI_ACTION}?${params.toString()}`, {
+      headers: HEADERS,
+      next: { revalidate: 60 * 60 * 24 },
+    });
+    if (!res.ok) return [];
+    const data = (await res.json()) as SearchResponse;
+    return (data.query?.search ?? []).map((s) => ({
+      slug: titleToSlug(s.title),
+      title: s.title,
+    }));
+  } catch {
+    return [];
+  }
 }
 
 type RestRelatedResponse = {
@@ -210,6 +352,18 @@ function isNoise(c: CandidateLink): boolean {
   if (/^list of /.test(t)) return true;
   if (/\bdisambiguation\b/.test(t)) return true;
   if (/^(category|template|help|portal|file|wikipedia):/i.test(c.title)) return true;
+  // Year-prefixed event stubs (e.g. "1947 BAA Finals", "1949–50 NBA season",
+  // "2025–26 NBA season", "1950 NBA draft"). These dominate alphabetical link
+  // dumps for sports/recurring topics and crowd out meaningful connections.
+  if (
+    /^\d{3,4}(?:[–-]\d{2,4})?\b.*\b(season|seasons|finals|draft|playoffs?|games|olympics|championships?|tournament|cup|series|election|grand prix)\b/.test(
+      t,
+    )
+  ) {
+    return true;
+  }
+  // Bare years / decades ("1947", "1990s").
+  if (/^\d{3,4}(?:s)?$/.test(t)) return true;
   return false;
 }
 
@@ -240,17 +394,27 @@ export async function fetchGrounding(slug: string): Promise<Grounding> {
   const canonicalTitle = summary.title;
   const canonicalSlug = titleToSlug(canonicalTitle);
 
-  const [related, outgoing, lead] = await Promise.all([
+  const [intro, morelike, related, outgoing, lead] = await Promise.all([
+    fetchIntroLinks(canonicalTitle),
+    fetchMoreLike(canonicalTitle),
     fetchRelated(canonicalTitle),
     fetchOutgoingLinks(canonicalTitle),
     fetchLeadExtract(canonicalTitle),
   ]);
 
-  // Related first (higher quality), then outgoing to fill the pool.
-  const candidates = dedupeAndClean([...related, ...outgoing], canonicalSlug).slice(
-    0,
-    60,
-  );
+  // The broad outgoing set is cleaned, then re-ordered by popularity so famous
+  // linked topics (Michael Jordan from NBA) rise above niche stubs.
+  const cleanedOutgoing = dedupeAndClean(outgoing, canonicalSlug).slice(0, 400);
+  const popularOutgoing = await rankByPageviews(cleanedOutgoing);
+
+  // Quality order: the article's own intro links (editorially important) and
+  // relevance-ranked "more like this" first, then the REST related set, then
+  // the popularity-ranked outgoing links. This keeps the pool full of
+  // meaningful, expected connections instead of date-prefixed event stubs.
+  const candidates = dedupeAndClean(
+    [...intro, ...morelike, ...related, ...popularOutgoing],
+    canonicalSlug,
+  ).slice(0, 60);
 
   const sourceUrl =
     summary.content_urls?.desktop?.page ??

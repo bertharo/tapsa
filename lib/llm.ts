@@ -28,7 +28,7 @@ const SYSTEM_PROMPT = `You are the connection engine for Tapsa, a knowledge-expl
 You receive a topic, its factual summary, and a list of candidate related topics (all real Wikipedia pages). \
 Your job:
 1. Rewrite the summary into 2-3 tight, confident sentences. No hedging, no "is a term that", no filler. Encyclopedic but modern.
-2. Select the ${MIN_CONNECTIONS}-${MAX_CONNECTIONS} MOST INTERESTING connections, strongly favoring non-obvious, intellectually surprising links over generic or purely categorical ones.
+2. Select the ${MIN_CONNECTIONS}-${MAX_CONNECTIONS} BEST connections. Favor substantive, meaningful links a curious person would genuinely want to explore — the defining people, places, ideas, and closely related topics (e.g. for "NBA": Michael Jordan, the Boston Celtics, the NBA Finals). Then include AT LEAST ONE non-obvious, intellectually surprising link. AVOID trivia, narrow date/event stubs (specific seasons, finals, drafts by year), and purely categorical links.
 3. Write a punchy one-line rationale for each connection (max ~14 words): the specific, concrete reason this link is worth exploring. Start with the substance — NEVER with filler like "This connection is worth exploring because" or "X is relevant because". No restating the obvious.
 4. Mark EXACTLY ONE connection as "surprising": true — the adjacent idea most curious people wouldn't think to explore from this topic. It should reward the click.
 
