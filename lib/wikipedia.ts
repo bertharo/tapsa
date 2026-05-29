@@ -25,24 +25,70 @@ type WikiSummary = {
   originalimage?: { source?: string };
 };
 
-/** Resolve a slug to its Wikipedia summary, following redirects. */
-async function fetchSummary(slug: string): Promise<WikiSummary> {
-  const titleQuery = slugToTitleQuery(slug);
+/** Fetch a summary by an exact title query. Returns null on 404/not-found. */
+async function restSummaryByTitle(titleQuery: string): Promise<WikiSummary | null> {
   const encoded = encodeURIComponent(titleQuery.replace(/\s+/g, "_"));
   const res = await fetch(`${WIKI_REST}/page/summary/${encoded}?redirect=true`, {
     headers: HEADERS,
     // Grounding facts rarely change; let Next cache aggressively.
     next: { revalidate: 60 * 60 * 24 },
   });
-
-  if (res.status === 404) throw new TopicNotFoundError(slug);
-  if (!res.ok) throw new Error(`Wikipedia summary failed (${res.status}) for ${slug}`);
-
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Wikipedia summary failed (${res.status}) for ${titleQuery}`);
   const data = (await res.json()) as WikiSummary;
   if (data.type === "https://mediawiki.org/wiki/HyperSwitch/errors/not_found") {
-    throw new TopicNotFoundError(slug);
+    return null;
   }
   return data;
+}
+
+/** Top OpenSearch hit for a free-text query — used to recover real titles. */
+async function searchTopTitle(query: string): Promise<string | null> {
+  const q = query.trim();
+  if (!q) return null;
+  const params = new URLSearchParams({
+    action: "opensearch",
+    search: q,
+    limit: "1",
+    namespace: "0",
+    format: "json",
+  });
+  try {
+    const res = await fetch(`${WIKI_ACTION}?${params.toString()}`, {
+      headers: HEADERS,
+      next: { revalidate: 60 * 60 * 24 },
+    });
+    if (!res.ok) return null;
+    // OpenSearch returns [query, [titles], [descriptions], [urls]].
+    const data = (await res.json()) as [string, string[], string[], string[]];
+    return data[1]?.[0] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolve a slug to its Wikipedia summary, following redirects.
+ *
+ * Our slugs are lossy: titles with "+", parentheses, "&", accents, etc. can't
+ * be reconstructed by slugToTitleQuery (e.g. "1ES 1927+654" -> "1es-1927654"),
+ * so a direct title lookup 404s. We fall back to OpenSearch, which matches real
+ * titles fuzzily, then fetch the recovered title. This keeps connection cards
+ * navigable instead of dead-ending on the "trail went cold" page.
+ */
+async function fetchSummary(slug: string): Promise<WikiSummary> {
+  const titleQuery = slugToTitleQuery(slug);
+
+  const direct = await restSummaryByTitle(titleQuery);
+  if (direct) return direct;
+
+  const resolvedTitle = await searchTopTitle(titleQuery);
+  if (resolvedTitle) {
+    const viaSearch = await restSummaryByTitle(resolvedTitle);
+    if (viaSearch) return viaSearch;
+  }
+
+  throw new TopicNotFoundError(slug);
 }
 
 type ActionLinksResponse = {
