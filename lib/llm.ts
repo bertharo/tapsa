@@ -136,6 +136,8 @@ function fallbackGenerate(g: Grounding, domain: Domain): TapsaNode {
     sourceUrl: g.sourceUrl,
     domain,
     connections,
+    sections: [],
+    kind: "article",
     generatedAt: new Date().toISOString(),
     schemaVersion: SCHEMA_VERSION,
     origin: "fallback",
@@ -204,10 +206,54 @@ async function generateWithLLM(g: Grounding, domain: Domain): Promise<TapsaNode>
     sourceUrl: g.sourceUrl,
     domain,
     connections,
+    sections: [],
+    kind: "article",
     generatedAt: new Date().toISOString(),
     schemaVersion: SCHEMA_VERSION,
     origin: "llm",
   };
+}
+
+const SECTION_SYSTEM_PROMPT = `You are the connection engine for Tapsa. You receive one section of a Wikipedia article and rewrite it into 2-3 tight, confident, engaging sentences in Tapsa's voice. No hedging, no filler, no markdown. Never invent facts not in the provided text. Respond with the rewritten summary text only — no preamble, no quotes.`;
+
+/**
+ * Summarize a single article section into Tapsa's voice. Falls back to a clean
+ * sentence trim of the source text when no key is configured or on error.
+ */
+export async function summarizeSection(
+  articleTitle: string,
+  sectionTitle: string,
+  sectionText: string,
+): Promise<{ summary: string; origin: "llm" | "fallback" }> {
+  const trimmed = sectionText.trim();
+  if (!trimmed) {
+    return { summary: `This section of ${articleTitle} has no extractable text.`, origin: "fallback" };
+  }
+  const { apiKey, baseURL, model } = llmConfig();
+  if (!apiKey) {
+    return { summary: trimToSentences(trimmed, 3), origin: "fallback" };
+  }
+  try {
+    const client = new OpenAI({ apiKey, baseURL });
+    const resp = await client.chat.completions.create({
+      model,
+      max_tokens: 400,
+      temperature: 0.5,
+      messages: [
+        { role: "system", content: SECTION_SYSTEM_PROMPT },
+        {
+          role: "user",
+          content: `ARTICLE: ${articleTitle}\nSECTION: ${sectionTitle}\n\nSECTION TEXT:\n${trimmed.slice(0, 1800)}`,
+        },
+      ],
+    });
+    const text = resp.choices[0]?.message?.content?.trim();
+    if (!text) return { summary: trimToSentences(trimmed, 3), origin: "fallback" };
+    return { summary: text, origin: "llm" };
+  } catch (err) {
+    console.error("[tapsa] section summary failed, using fallback:", err);
+    return { summary: trimToSentences(trimmed, 3), origin: "fallback" };
+  }
 }
 
 /** Generate a Tapsa node from grounding. Uses the LLM if a key is configured, else falls back. */

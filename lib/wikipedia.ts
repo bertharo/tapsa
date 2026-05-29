@@ -183,6 +183,111 @@ export async function fetchGrounding(slug: string): Promise<Grounding> {
   };
 }
 
+export type WikiSection = {
+  index: string;
+  line: string;
+  anchor: string;
+  /** Hierarchical TOC number, e.g. "1", "1.2" — encodes parent/child/sibling. */
+  number: string;
+  toclevel: number;
+};
+
+const SECTION_BOILERPLATE = new Set(
+  [
+    "references",
+    "notes",
+    "citations",
+    "footnotes",
+    "sources",
+    "external links",
+    "further reading",
+    "bibliography",
+    "see also",
+    "works cited",
+    "explanatory notes",
+  ].map((s) => s.toLowerCase()),
+);
+
+/** All sections of an article (with hierarchy), minus reference boilerplate. */
+export async function fetchSections(title: string): Promise<WikiSection[]> {
+  const params = new URLSearchParams({
+    action: "parse",
+    format: "json",
+    prop: "sections",
+    page: title,
+    redirects: "1",
+    origin: "*",
+  });
+  const res = await fetch(`${WIKI_ACTION}?${params.toString()}`, {
+    headers: HEADERS,
+    next: { revalidate: 60 * 60 * 24 },
+  });
+  if (!res.ok) return [];
+  const data = (await res.json()) as {
+    parse?: {
+      sections?: {
+        toclevel: number;
+        line: string;
+        index: string;
+        anchor: string;
+        number: string;
+      }[];
+    };
+  };
+  const sections = data.parse?.sections ?? [];
+  return sections
+    .filter((s) => /^\d+$/.test(s.index)) // numeric index = fetchable content
+    .map((s) => ({
+      index: s.index,
+      line: stripHtml(s.line),
+      anchor: s.anchor,
+      number: s.number,
+      toclevel: s.toclevel,
+    }))
+    .filter((s) => s.line && !SECTION_BOILERPLATE.has(s.line.toLowerCase()));
+}
+
+/** Plain-text extract of a single section, trimmed for LLM input. */
+export async function fetchSectionExtract(title: string, index: string): Promise<string> {
+  const params = new URLSearchParams({
+    action: "parse",
+    format: "json",
+    prop: "text",
+    page: title,
+    section: index,
+    redirects: "1",
+    disabletoc: "1",
+    origin: "*",
+  });
+  const res = await fetch(`${WIKI_ACTION}?${params.toString()}`, {
+    headers: HEADERS,
+    next: { revalidate: 60 * 60 * 24 },
+  });
+  if (!res.ok) return "";
+  const data = (await res.json()) as { parse?: { text?: { "*"?: string } } };
+  const html = data.parse?.text?.["*"] ?? "";
+  return stripHtml(html).slice(0, 2000);
+}
+
+/** Crude but effective HTML → text for section bodies. */
+function stripHtml(html: string): string {
+  return html
+    .replace(/<sup[^>]*>[\s\S]*?<\/sup>/gi, "") // citation markers
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+    .replace(/<table[^>]*>[\s\S]*?<\/table>/gi, "") // infoboxes
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&rsquo;|&apos;/g, "'")
+    .replace(/\[edit\]/gi, "")
+    .replace(/\[\d+\]/g, "") // leftover ref numbers
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export type AutocompleteResult = { slug: string; title: string };
 
 /** OpenSearch-backed autocomplete against real Wikipedia titles. */
