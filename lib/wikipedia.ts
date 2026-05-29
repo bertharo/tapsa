@@ -233,6 +233,26 @@ async function rankByPageviews(cands: CandidateLink[]): Promise<CandidateLink[]>
 }
 
 /**
+ * Extract namespace-0 article links from rendered Wikipedia HTML, in document
+ * order. The [^"#:] class skips anchors and namespaced (File:, Help:, Category:…)
+ * links, which always contain a colon.
+ */
+function extractWikiLinks(html: string): CandidateLink[] {
+  const out: CandidateLink[] = [];
+  const seen = new Set<string>();
+  const re = /<a href="\/wiki\/([^"#:]+)"/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html))) {
+    const linkTitle = decodeURIComponent(m[1]).replace(/_/g, " ");
+    const slug = titleToSlug(linkTitle);
+    if (!slug || seen.has(slug)) continue;
+    seen.add(slug);
+    out.push({ slug, title: linkTitle });
+  }
+  return out;
+}
+
+/**
  * Links inside the article's intro/lead section. These are the editorially
  * chosen "most important" links (key people, places, sub-topics) and are far
  * higher quality than the full alphabetical link dump.
@@ -254,21 +274,7 @@ async function fetchIntroLinks(title: string): Promise<CandidateLink[]> {
     });
     if (!res.ok) return [];
     const data = (await res.json()) as { parse?: { text?: { "*"?: string } } };
-    const html = data.parse?.text?.["*"] ?? "";
-    const out: CandidateLink[] = [];
-    const seen = new Set<string>();
-    // /wiki/<title> hrefs; the [^"#:] class skips anchors and namespaced
-    // (File:, Help:, Category:…) links, which always contain a colon.
-    const re = /<a href="\/wiki\/([^"#:]+)"/g;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(html))) {
-      const linkTitle = decodeURIComponent(m[1]).replace(/_/g, " ");
-      const slug = titleToSlug(linkTitle);
-      if (!slug || seen.has(slug)) continue;
-      seen.add(slug);
-      out.push({ slug, title: linkTitle });
-    }
-    return out;
+    return extractWikiLinks(data.parse?.text?.["*"] ?? "");
   } catch {
     return [];
   }
@@ -497,8 +503,15 @@ export async function fetchSections(title: string): Promise<WikiSection[]> {
     .filter((s) => s.line && !SECTION_BOILERPLATE.has(s.line.toLowerCase()));
 }
 
-/** Plain-text extract of a single section, trimmed for LLM input. */
-export async function fetchSectionExtract(title: string, index: string): Promise<string> {
+/**
+ * A single section's body text AND the topical links inside it. The links are
+ * what let a drilled-into section generate NEW connections to other articles
+ * (e.g. Einstein's "Scientific career" → Brownian motion, special relativity).
+ */
+export async function fetchSectionContent(
+  title: string,
+  index: string,
+): Promise<{ text: string; links: CandidateLink[] }> {
   const params = new URLSearchParams({
     action: "parse",
     format: "json",
@@ -513,11 +526,28 @@ export async function fetchSectionExtract(title: string, index: string): Promise
     headers: HEADERS,
     next: { revalidate: 60 * 60 * 24 },
   });
-  if (!res.ok) return "";
+  if (!res.ok) return { text: "", links: [] };
   const data = (await res.json()) as { parse?: { text?: { "*"?: string } } };
   const html = data.parse?.text?.["*"] ?? "";
-  // Generous cap: this text feeds both the LLM rewrite and the reading view.
-  return stripHtml(html).slice(0, 4000);
+  return {
+    // Generous cap: this text feeds both the LLM rewrite and the reading view.
+    text: stripHtml(html).slice(0, 4000),
+    links: extractWikiLinks(html),
+  };
+}
+
+/**
+ * Turn a raw set of links into a ranked candidate pool: drop noise, cap, and
+ * re-order by popularity. Shared by section-node generation so drilled-in
+ * sections get the same high-quality connection pool as article nodes.
+ */
+export async function rankCandidates(
+  links: CandidateLink[],
+  selfSlug: string,
+): Promise<CandidateLink[]> {
+  const cleaned = dedupeAndClean(links, selfSlug).slice(0, 300);
+  const ranked = await rankByPageviews(cleaned);
+  return ranked.slice(0, 60);
 }
 
 /** Crude but effective HTML → text for section bodies. */

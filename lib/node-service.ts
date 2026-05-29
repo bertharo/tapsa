@@ -1,13 +1,14 @@
-import type { Connection, Domain, SectionRef, TapsaNode } from "./types";
+import type { Connection, Domain, Grounding, SectionRef, TapsaNode } from "./types";
 import { SCHEMA_VERSION } from "./types";
 import { getStore } from "./cache";
 import {
   fetchGrounding,
-  fetchSectionExtract,
+  fetchSectionContent,
   fetchSections,
+  rankCandidates,
   TopicNotFoundError,
 } from "./wikipedia";
-import { generateNode, summarizeSection } from "./llm";
+import { generateNode } from "./llm";
 import { recordNodeEvent } from "./metrics";
 import { makeSectionSlug, parseSectionSlug, titleToSlug } from "./slug";
 
@@ -141,9 +142,12 @@ export async function getOrCreateNode(
 }
 
 /**
- * Build a section node: a drilled-into part of an article. Its connections are
- * the sibling sections (move laterally through the article) plus a link back to
- * the full overview. The summary is an LLM rewrite of just that section.
+ * Build a section node: a drilled-into part of an article. Like an article
+ * node, it gets NEW topical connections — drawn from the links inside that
+ * section and selected by the LLM — so drilling deeper keeps the map branching.
+ * Child subsections become "go deeper" targets and a zoom-out link returns to
+ * the parent section / full article. The summary is an LLM rewrite of the
+ * section text.
  */
 async function createSectionNode(
   parentSlug: string,
@@ -160,12 +164,29 @@ async function createSectionNode(
     throw new TopicNotFoundError(`${parentSlug}~${sectionSlug}`);
   }
 
-  const text = await fetchSectionExtract(parent.title, match.index);
-  const { summary, origin } = await summarizeSection(parent.title, match.line, text);
   const domain = hintedDomain ?? inferDomain(`${parent.title} ${parent.summary}`);
-
   const canonicalParentSlug = parent.slug;
   const selfSlug = makeSectionSlug(canonicalParentSlug, match.line);
+  const sourceUrl = `https://en.wikipedia.org/wiki/${encodeURIComponent(
+    parent.title.replace(/\s+/g, "_"),
+  )}#${match.anchor}`;
+
+  // The section's body text + the topical links inside it (the new connections).
+  const { text, links } = await fetchSectionContent(parent.title, match.index);
+  const candidates = await rankCandidates(links, selfSlug);
+
+  // One LLM pass rewrites the section into Tapsa's voice AND selects topical
+  // connections from the section's own links — same engine as article nodes.
+  const grounding: Grounding = {
+    slug: selfSlug,
+    title: `${match.line} (${parent.title})`,
+    summary: text ? text.slice(0, 1800) : `This section covers part of ${parent.title}.`,
+    lead: text,
+    sourceUrl,
+    candidates,
+  };
+  const generated = await generateNode(grounding, domain);
+
   const depth = match.number.split(".").length;
   const parentNumber = depth > 1 ? match.number.split(".").slice(0, -1).join(".") : null;
 
@@ -178,59 +199,63 @@ async function createSectionNode(
     title: s.line,
   }));
 
-  // Same-level siblings under the same parent → lateral connections.
-  const siblingConnections: Connection[] = sections
-    .filter((s) => {
-      if (s.index === match.index) return false;
-      if (s.number.split(".").length !== depth) return false;
-      const sParent =
-        s.number.split(".").length > 1 ? s.number.split(".").slice(0, -1).join(".") : null;
-      return sParent === parentNumber;
-    })
-    .slice(0, 5)
-    .map((s) => ({
-      slug: makeSectionSlug(canonicalParentSlug, s.line),
-      title: s.line,
-      rationale: `Another part of ${parent.title}.`,
-      surprising: false,
-    }));
-
   // Zoom back out: to the immediate parent section, or the whole article.
   const parentSection = parentNumber
     ? sections.find((s) => s.number === parentNumber)
     : undefined;
-  const parentConnection: Connection = parentSection
+  const zoomOut: Connection = parentSection
     ? {
         slug: makeSectionSlug(canonicalParentSlug, parentSection.line),
         title: parentSection.line,
         rationale: `Back up to ${parentSection.line}.`,
-        surprising: true,
+        surprising: false,
       }
     : {
         slug: canonicalParentSlug,
         title: parent.title,
         rationale: `Zoom back out to all of ${parent.title}.`,
-        surprising: true,
+        surprising: false,
       };
+
+  // Topical connections first; if the section had no usable links, fall back to
+  // sibling-section navigation so the node is never a dead end. Always offer the
+  // zoom-out so the user can climb back up the article.
+  let connections = [...generated.connections];
+  if (connections.length === 0) {
+    connections = sections
+      .filter((s) => {
+        if (s.index === match.index) return false;
+        if (s.number.split(".").length !== depth) return false;
+        const sParent =
+          s.number.split(".").length > 1 ? s.number.split(".").slice(0, -1).join(".") : null;
+        return sParent === parentNumber;
+      })
+      .slice(0, 5)
+      .map((s) => ({
+        slug: makeSectionSlug(canonicalParentSlug, s.line),
+        title: s.line,
+        rationale: `Another part of ${parent.title}.`,
+        surprising: false,
+      }));
+  }
+  connections = [...connections, zoomOut];
 
   const node: TapsaNode = {
     slug: selfSlug,
     title: match.line,
-    summary,
+    summary: generated.summary,
     // The section's own body text is the "longer read" for section nodes.
-    lead: text || summary,
-    sourceUrl: `https://en.wikipedia.org/wiki/${encodeURIComponent(
-      parent.title.replace(/\s+/g, "_"),
-    )}#${match.anchor}`,
+    lead: text || generated.summary,
+    sourceUrl,
     domain,
-    connections: [parentConnection, ...siblingConnections],
+    connections,
     sections: childSections,
     kind: "section",
     parentSlug: canonicalParentSlug,
     parentTitle: parent.title,
     generatedAt: new Date().toISOString(),
     schemaVersion: SCHEMA_VERSION,
-    origin,
+    origin: generated.origin,
   };
 
   await getStore().set(node);
