@@ -1,19 +1,10 @@
 /** @type {import('next').NextConfig} */
+// Note: the dev script sets WATCHPACK_POLLING=true. macOS's FSEvents-based file
+// watcher exhausts per-process stream limits (EMFILE) on large trees like
+// node_modules, which made Next's config watcher emit phantom change events and
+// restart in a loop. Global watchpack polling avoids native watchers entirely.
 const nextConfig = {
   reactStrictMode: true,
-  webpack(config, { dev }) {
-    // macOS has a low default file-descriptor limit; the native file watcher
-    // exhausts it (EMFILE) and emits phantom change events, causing a dev
-    // restart loop. Polling avoids per-file watchers entirely.
-    if (dev) {
-      config.watchOptions = {
-        poll: 1000,
-        aggregateTimeout: 300,
-        ignored: ["**/node_modules", "**/.next", "**/.git", "**/.tapsa-cache"],
-      };
-    }
-    return config;
-  },
 };
 
 export default nextConfig;
