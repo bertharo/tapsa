@@ -2,6 +2,7 @@ import type { Connection, Domain, Grounding, SectionRef, TapsaNode } from "./typ
 import { SCHEMA_VERSION } from "./types";
 import { getStore } from "./cache";
 import {
+  classifyDomain,
   fetchGrounding,
   fetchSectionContent,
   fetchSections,
@@ -15,62 +16,6 @@ import { makeSectionSlug, parseSectionSlug, titleToSlug } from "./slug";
 export { TopicNotFoundError };
 
 const MAX_SECTIONS = 8;
-
-const SCIENCE_HINTS = [
-  "physics",
-  "chemistry",
-  "biology",
-  "quantum",
-  "particle",
-  "molecule",
-  "cell",
-  "gene",
-  "energy",
-  "galaxy",
-  "planet",
-  "star",
-  "theorem",
-  "equation",
-  "evolution",
-  "species",
-  "atom",
-  "neuron",
-  "disease",
-  "organism",
-  "mathematics",
-  "geology",
-  "climate",
-];
-
-const HISTORY_HINTS = [
-  "empire",
-  "war",
-  "revolution",
-  "century",
-  "ancient",
-  "dynasty",
-  "king",
-  "queen",
-  "battle",
-  "civilization",
-  "medieval",
-  "treaty",
-  "republic",
-  "monarch",
-  "colonial",
-  "renaissance",
-  "kingdom",
-  "bc",
-  "ad",
-];
-
-/** Lightweight domain inference (science + history are the only v1 domains). */
-function inferDomain(text: string): Domain {
-  const t = text.toLowerCase();
-  const score = (hints: string[]) =>
-    hints.reduce((n, h) => (t.includes(h) ? n + 1 : n), 0);
-  return score(HISTORY_HINTS) > score(SCIENCE_HINTS) ? "history" : "science";
-}
 
 export type NodeResult = { node: TapsaNode; cacheHit: boolean };
 
@@ -109,8 +54,15 @@ export async function getOrCreateNode(
     }
   }
 
-  const domain = hintedDomain ?? inferDomain(`${grounding.title} ${grounding.summary}`);
-  const node = await generateNode(grounding, domain);
+  // Classify the topic (grounded in Wikidata P31) in parallel with generation,
+  // so the grounded category adds no latency. A curated hint always wins.
+  const [node, domain] = await Promise.all([
+    generateNode(grounding, hintedDomain),
+    hintedDomain
+      ? Promise.resolve<Domain | undefined>(hintedDomain)
+      : classifyDomain(grounding.title),
+  ]);
+  node.domain = domain;
 
   // Attach top-level drill-down sections so users can "go deeper".
   try {
@@ -164,7 +116,6 @@ async function createSectionNode(
     throw new TopicNotFoundError(`${parentSlug}~${sectionSlug}`);
   }
 
-  const domain = hintedDomain ?? inferDomain(`${parent.title} ${parent.summary}`);
   const canonicalParentSlug = parent.slug;
   const selfSlug = makeSectionSlug(canonicalParentSlug, match.line);
   const sourceUrl = `https://en.wikipedia.org/wiki/${encodeURIComponent(
@@ -185,7 +136,14 @@ async function createSectionNode(
     sourceUrl,
     candidates,
   };
-  const generated = await generateNode(grounding, domain);
+  // Classify from the parent (grounded), in parallel with generation. Section
+  // nodes display the parent title, not the domain, but we keep it consistent.
+  const [generated, domain] = await Promise.all([
+    generateNode(grounding, hintedDomain),
+    hintedDomain
+      ? Promise.resolve<Domain | undefined>(hintedDomain)
+      : classifyDomain(parent.title),
+  ]);
 
   const depth = match.number.split(".").length;
   const parentNumber = depth > 1 ? match.number.split(".").slice(0, -1).join(".") : null;

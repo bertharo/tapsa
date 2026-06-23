@@ -1,16 +1,17 @@
 "use client";
 
-import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import type { Connection, SectionRef, TapsaNode } from "@/lib/types";
-
-/** How much of the lead body to show before the "Read more" fold. */
-const FOLD_CHARS = 850;
+import type { Connection, TapsaNode } from "@/lib/types";
+import { pickPredictPair } from "@/lib/familiarity";
+import ConnectionCard from "./ConnectionCard";
+import { useFamiliarity } from "./useFamiliarity";
 
 /**
  * Reading-first view of a node: you land here when you travel to a topic, read
- * its summary + longer body, optionally drill into sections, and only reveal
- * the connection graph when you choose to ("Explore connections").
+ * its tight teaser, then "go deeper" into RELATED ARTICLES (the node's
+ * connections, rendered as tappable cards). The radial map is an optional
+ * alternate view of those same connections. The full text lives one click away
+ * on Wikipedia — the product's job is connecting ideas, not reprinting articles.
  */
 export default function ReadingView({
   node,
@@ -21,22 +22,23 @@ export default function ReadingView({
   onTravel: (conn: Connection) => void;
   onExplore: () => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const { known, toggleKnown } = useFamiliarity();
+  const anchorKnown = known.has(node.slug);
 
+  // Omit the category entirely when it isn't confidently known (never guess).
   const eyebrow =
     node.kind === "section" && node.parentTitle
       ? `${node.parentTitle} · section`
-      : node.domain;
+      : node.domain ?? null;
 
-  const paragraphs = useMemo(() => splitParagraphs(node.lead ?? ""), [node.lead]);
-  const foldedParagraphs = useMemo(
-    () => (expanded ? paragraphs : foldParagraphs(paragraphs, FOLD_CHARS)),
-    [paragraphs, expanded],
-  );
-  const hasMore = !expanded && foldedParagraphs.length < paragraphs.length;
-
-  const goDeeper = (s: SectionRef) =>
-    onTravel({ slug: s.slug, title: s.title, rationale: "", surprising: false });
+  // The featured predict→reveal pairing: this node (anchor) + its best target.
+  // Section nodes are structural navigation, not learning links, so they keep
+  // the plain list.
+  const pair = node.kind === "article" ? pickPredictPair(node, known) : null;
+  const anchorLede = node.summary.match(/^[^.!?]+[.!?]/)?.[0] ?? node.summary;
+  const otherConnections = pair
+    ? node.connections.filter((c) => c.slug !== pair.target.slug)
+    : node.connections;
 
   return (
     <motion.article
@@ -47,105 +49,120 @@ export default function ReadingView({
       className="mx-auto w-full max-w-2xl"
     >
       <div className="rounded-3xl border border-ink/10 bg-white px-6 py-7 shadow-node sm:px-9 sm:py-9">
-        <span className="inline-block text-[11px] font-medium uppercase tracking-[0.16em] text-accent">
-          {eyebrow}
-        </span>
+        {eyebrow && (
+          <span className="inline-block text-[11px] font-medium uppercase tracking-[0.16em] text-accent">
+            {eyebrow}
+          </span>
+        )}
         <h1 className="mt-2 font-serif text-3xl font-medium leading-tight tracking-tight text-ink sm:text-4xl">
           {node.title}
         </h1>
 
-        {/* Tight LLM teaser — the lead-in to the longer read. */}
+        {/* Tight LLM teaser — shown once. */}
         <p className="mt-4 font-serif text-lg leading-relaxed text-ink-soft">
           {node.summary}
         </p>
 
-        {/* Longer factual body. */}
-        {foldedParagraphs.length > 0 && (
-          <div className="mt-4 space-y-3 border-t border-ink/5 pt-4 font-serif text-[15px] leading-relaxed text-ink-soft">
-            {foldedParagraphs.map((p, i) => (
-              <p key={i}>{p}</p>
-            ))}
-            {hasMore && (
-              <button
-                type="button"
-                onClick={() => setExpanded(true)}
-                className="text-sm font-medium text-accent underline-offset-2 hover:underline"
-              >
-                Read more
-              </button>
-            )}
-          </div>
-        )}
+        <div className="mt-5 flex flex-wrap items-center gap-x-4 gap-y-2">
+          {/* Mark the anchor: what you already know grounds the predict cards. */}
+          {node.kind === "article" && (
+            <button
+              type="button"
+              onClick={() => toggleKnown(node.slug)}
+              aria-pressed={anchorKnown}
+              className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition ${
+                anchorKnown
+                  ? "border-accent/40 bg-accent/5 text-accent"
+                  : "border-ink/10 bg-white text-ink-soft hover:border-accent/30 hover:text-ink"
+              }`}
+            >
+              {anchorKnown ? "✓ You know this" : "I know this"}
+            </button>
+          )}
 
-        <a
-          href={node.sourceUrl}
-          target="_blank"
-          rel="noreferrer"
-          className="mt-4 inline-block text-xs text-ink-faint underline-offset-2 hover:text-ink-muted hover:underline"
-        >
-          Read the full article on Wikipedia ↗
-        </a>
-
-        {/* Go deeper: drill into the article's own sections (stays in reading). */}
-        {node.sections.length > 0 && (
-          <div className="mt-6 border-t border-ink/5 pt-4">
-            <h2 className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-ink-muted">
-              Go deeper
-            </h2>
-            <div className="grid gap-1.5 sm:grid-cols-2">
-              {node.sections.map((s) => (
-                <button
-                  key={s.slug}
-                  type="button"
-                  onClick={() => goDeeper(s)}
-                  className="rounded-lg border border-ink/5 px-3 py-2 text-left text-sm text-ink-soft transition hover:border-accent/30 hover:bg-paper-soft hover:text-ink"
-                >
-                  {s.title}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
+          {/* Single, clear CTA to the source — no in-app body to compete with it. */}
+          <a
+            href={node.sourceUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 text-sm font-medium text-ink-soft underline-offset-2 transition hover:text-accent hover:underline"
+          >
+            Read the full article on Wikipedia ↗
+          </a>
+        </div>
       </div>
 
-      {/* The deliberate hand-off into the graph — connections stay hidden until here. */}
+      {/* Go deeper: RELATED ARTICLES (the node's connections) as tappable cards. */}
       {node.connections.length > 0 && (
-        <div className="mt-5 flex justify-center">
-          <button
-            type="button"
-            onClick={onExplore}
-            className="group inline-flex items-center gap-2 rounded-full bg-ink px-5 py-2.5 text-sm font-medium text-paper shadow-sm transition hover:bg-ink-soft"
-          >
-            Explore {node.connections.length} connection
-            {node.connections.length === 1 ? "" : "s"}
-            <span className="transition-transform group-hover:translate-x-0.5">→</span>
-          </button>
+        <div className="mt-6">
+          <div className="mb-3 flex items-center justify-between gap-3 px-1">
+            <h2 className="text-xs font-semibold uppercase tracking-[0.14em] text-ink-muted">
+              {pair ? "Make the connection" : "Go deeper"}
+            </h2>
+            <button
+              type="button"
+              onClick={onExplore}
+              className="group inline-flex items-center gap-1 text-xs font-medium text-ink-faint transition hover:text-accent"
+            >
+              View as map
+              <span className="transition-transform group-hover:translate-x-0.5">→</span>
+            </button>
+          </div>
+
+          {/* Featured predict → reveal → elaborate card for the best pairing. */}
+          {pair && (
+            <ConnectionCard
+              anchorSlug={node.slug}
+              anchorTitle={node.title}
+              anchorLede={anchorLede}
+              target={pair.target}
+              anchorIsKnown={pair.anchorIsKnown}
+              onTravel={onTravel}
+            />
+          )}
+
+          {otherConnections.length > 0 && (
+            <>
+              {pair && (
+                <p className="mb-2 mt-5 px-1 text-[11px] font-medium uppercase tracking-[0.14em] text-ink-faint">
+                  Or jump straight in
+                </p>
+              )}
+              <div className="grid gap-2.5 sm:grid-cols-2">
+                {otherConnections.map((c) => (
+                  <button
+                    key={c.slug}
+                    type="button"
+                    onClick={() => onTravel(c)}
+                    className={`rounded-2xl border bg-white p-4 text-left shadow-node transition hover:-translate-y-0.5 hover:shadow-glow ${
+                      c.surprising
+                        ? "surprising-glow border-accent/40"
+                        : "border-ink/10 hover:border-accent/30"
+                    }`}
+                  >
+                    {c.surprising && (
+                      <span className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.14em] text-accent">
+                        What you missed
+                      </span>
+                    )}
+                    <span className="block text-[15px] font-semibold leading-snug text-ink">
+                      {c.title}
+                    </span>
+                    {c.relationship && (
+                      <span className="mt-1 block text-[10px] font-medium uppercase tracking-[0.1em] text-ink-faint">
+                        {c.relationship}
+                      </span>
+                    )}
+                    {c.rationale && (
+                      <p className="mt-1 text-xs leading-snug text-ink-muted">{c.rationale}</p>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
         </div>
       )}
     </motion.article>
   );
-}
-
-/**
- * Split lead text into paragraphs. Wikipedia's plaintext extracts separate
- * paragraphs with single newlines (no intra-paragraph newlines), so we break on
- * any run of newlines. Section bodies have none and stay a single paragraph.
- */
-function splitParagraphs(text: string): string[] {
-  return text
-    .split(/\n+/)
-    .map((p) => p.trim())
-    .filter(Boolean);
-}
-
-/** Keep whole paragraphs up to ~limit chars so the fold never cuts mid-sentence. */
-function foldParagraphs(paragraphs: string[], limit: number): string[] {
-  const out: string[] = [];
-  let total = 0;
-  for (const p of paragraphs) {
-    if (out.length > 0 && total + p.length > limit) break;
-    out.push(p);
-    total += p.length;
-  }
-  return out.length ? out : paragraphs.slice(0, 1);
 }

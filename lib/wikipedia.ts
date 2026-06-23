@@ -1,8 +1,9 @@
-import type { CandidateLink, Grounding } from "./types";
+import type { CandidateLink, Domain, Grounding } from "./types";
 import { slugToTitleQuery, titleToSlug } from "./slug";
 
 const WIKI_REST = "https://en.wikipedia.org/api/rest_v1";
 const WIKI_ACTION = "https://en.wikipedia.org/w/api.php";
+const WIKIDATA_ACTION = "https://www.wikidata.org/w/api.php";
 
 // Wikimedia asks all clients to send a descriptive User-Agent.
 const UA =
@@ -567,6 +568,114 @@ function stripHtml(html: string): string {
     .replace(/\[\d+\]/g, "") // leftover ref numbers
     .replace(/\s+/g, " ")
     .trim();
+}
+
+/** Wikidata QID for an article, via pageprops. Null when the page has none. */
+async function fetchWikidataId(title: string): Promise<string | null> {
+  const params = new URLSearchParams({
+    action: "query",
+    format: "json",
+    prop: "pageprops",
+    ppprop: "wikibase_item",
+    titles: title,
+    redirects: "1",
+    origin: "*",
+  });
+  try {
+    const res = await fetch(`${WIKI_ACTION}?${params.toString()}`, {
+      headers: HEADERS,
+      next: { revalidate: 60 * 60 * 24 },
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as {
+      query?: { pages?: Record<string, { pageprops?: { wikibase_item?: string } }> };
+    };
+    const pages = data.query?.pages ?? {};
+    return Object.values(pages)[0]?.pageprops?.wikibase_item ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** English labels of an entity's "instance of" (P31) targets. */
+async function fetchInstanceOfLabels(qid: string): Promise<string[]> {
+  const claimsParams = new URLSearchParams({
+    action: "wbgetclaims",
+    entity: qid,
+    property: "P31",
+    format: "json",
+    origin: "*",
+  });
+  try {
+    const res = await fetch(`${WIKIDATA_ACTION}?${claimsParams.toString()}`, {
+      headers: HEADERS,
+      next: { revalidate: 60 * 60 * 24 },
+    });
+    if (!res.ok) return [];
+    const data = (await res.json()) as {
+      claims?: { P31?: { mainsnak?: { datavalue?: { value?: { id?: string } } } }[] };
+    };
+    const targetIds = (data.claims?.P31 ?? [])
+      .map((c) => c.mainsnak?.datavalue?.value?.id)
+      .filter((x): x is string => !!x);
+    if (targetIds.length === 0) return [];
+
+    const labelParams = new URLSearchParams({
+      action: "wbgetentities",
+      ids: targetIds.slice(0, 12).join("|"),
+      props: "labels",
+      languages: "en",
+      format: "json",
+      origin: "*",
+    });
+    const lres = await fetch(`${WIKIDATA_ACTION}?${labelParams.toString()}`, {
+      headers: HEADERS,
+      next: { revalidate: 60 * 60 * 24 },
+    });
+    if (!lres.ok) return [];
+    const ldata = (await lres.json()) as {
+      entities?: Record<string, { labels?: { en?: { value?: string } } }>;
+    };
+    return Object.values(ldata.entities ?? {})
+      .map((e) => e.labels?.en?.value)
+      .filter((x): x is string => !!x);
+  } catch {
+    return [];
+  }
+}
+
+const DOMAIN_RULES: { domain: Domain; pattern: RegExp }[] = [
+  {
+    domain: "science",
+    pattern:
+      /\b(?:astronom\w*|celestial|planet\w*|moons?|stars?|galax\w*|nebula\w*|comets?|asteroids?|chemical\w*|compounds?|elements?|minerals?|molecul\w*|particles?|subatomic|physical quantity|unit of measurement|scientific|theorems?|mathematic\w*|equations?|taxon\w*|species|organis\w*|bacteri\w*|virus\w*|proteins?|enzymes?|diseases?|disorders?|syndromes?|anatomical|biolog\w*|physic\w*|chemistr\w*|metabolic|natural phenomenon)\b/,
+  },
+  {
+    domain: "history",
+    pattern:
+      /\b(?:historical|history|ancient|former (?:country|kingdom|monarchy|state|empire)|empires?|dynast\w*|kingdoms?|civili[sz]ation\w*|wars?|battles?|military conflict|sieges?|treat(?:y|ies)|revolutions?|monarch\w*|archaeolog\w*|eras?|epochs?|prehistor\w*|colonial)\b/,
+  },
+];
+
+/**
+ * Grounded topic classification from Wikidata "instance of" (P31). Returns a
+ * domain ONLY when the entity's types map cleanly and unambiguously to exactly
+ * one; otherwise undefined, so the UI omits the label rather than guessing.
+ * e.g. "World Cup" → P31 "recurring sporting event" maps to neither → undefined
+ * (must never read SCIENCE).
+ */
+export async function classifyDomain(title: string): Promise<Domain | undefined> {
+  const qid = await fetchWikidataId(title);
+  if (!qid) return undefined;
+  const labels = await fetchInstanceOfLabels(qid);
+  if (labels.length === 0) return undefined;
+
+  const blob = labels.join(" • ").toLowerCase();
+  const matched = Array.from(
+    new Set(DOMAIN_RULES.filter((r) => r.pattern.test(blob)).map((r) => r.domain)),
+  );
+  // Exactly one domain matched → confident. Zero or both (ambiguous) → omit.
+  return matched.length === 1 ? matched[0] : undefined;
 }
 
 export type AutocompleteResult = { slug: string; title: string };

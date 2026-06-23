@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import { z } from "zod";
-import type { Connection, Domain, Grounding, TapsaNode } from "./types";
-import { SCHEMA_VERSION } from "./types";
+import type { Connection, Domain, Grounding, RelationshipType, TapsaNode } from "./types";
+import { RELATIONSHIP_TYPES, SCHEMA_VERSION } from "./types";
 
 /**
  * Model layer. Talks to any OpenAI-compatible endpoint; defaults to Groq
@@ -24,16 +24,20 @@ function llmConfig() {
   };
 }
 
-const SYSTEM_PROMPT = `You are the connection engine for Tapsa, a knowledge-exploration tool. \
-You receive a topic, its factual summary, and a list of candidate related topics (all real Wikipedia pages). \
+const SYSTEM_PROMPT = `You are the connection engine for Tapsa, a learning tool. \
+You receive a topic (the ANCHOR), its factual summary, and a list of candidate related topics (the TARGETS — all real Wikipedia pages, so a real link already exists). \
 Your job:
 1. Rewrite the summary into 2-3 tight, confident sentences. No hedging, no "is a term that", no filler. Encyclopedic but modern.
-2. Select the ${MIN_CONNECTIONS}-${MAX_CONNECTIONS} BEST connections. Favor substantive, meaningful links a curious person would genuinely want to explore — the defining people, places, ideas, and closely related topics (e.g. for "NBA": Michael Jordan, the Boston Celtics, the NBA Finals). Then include AT LEAST ONE non-obvious, intellectually surprising link. AVOID trivia, narrow date/event stubs (specific seasons, finals, drafts by year), and purely categorical links.
-3. Write a punchy one-line rationale for each connection (max ~14 words): the specific, concrete reason this link is worth exploring. Start with the substance — NEVER with filler like "This connection is worth exploring because" or "X is relevant because". No restating the obvious.
-4. Mark EXACTLY ONE connection as "surprising": true — the adjacent idea most curious people wouldn't think to explore from this topic. It should reward the click.
+2. Select the ${MIN_CONNECTIONS}-${MAX_CONNECTIONS} BEST connections. Favor substantive, STRUCTURAL links a curious person would genuinely want to explore — the defining people, places, ideas, and closely related topics. Include AT LEAST ONE non-obvious, intellectually surprising link. AVOID trivia, narrow date/event stubs (specific seasons, finals, drafts by year), and purely categorical links.
+3. For EACH selected connection, output:
+   - "relationship": the ONE label from this fixed vocabulary that most precisely fits how the ANCHOR relates to the TARGET: ${RELATIONSHIP_TYPES.map((t) => `"${t}"`).join(", ")}. Choose the most specific structural fit.
+   - "rationale": ONE precise sentence stating specifically HOW the anchor connects to the target — the actual mechanism or link, grounded ONLY in the provided summary. Not "they are related"; state the concrete connection. Max ~22 words. Never begin with filler like "This connection".
+4. Only include a connection if you can state a REAL, specific, grounded relationship. If a candidate has no genuine articulable connection, OMIT it — never invent one to pad the list.
+5. Mark EXACTLY ONE connection as "surprising": true — the adjacent idea most curious people wouldn't think to explore from this topic. It should reward the click.
 
 Hard rules:
 - You may ONLY choose connections whose slug appears in the provided candidate list. Never invent a slug or topic.
+- "relationship" MUST be exactly one of the allowed values, verbatim.
 - Never invent facts not present in the source summary.
 - Respond ONLY with valid JSON matching the schema. No prose, no markdown, no code fences.`;
 
@@ -43,6 +47,9 @@ const llmOutputSchema = z.object({
     .array(
       z.object({
         slug: z.string().min(1),
+        // Lenient on purpose: an off-vocabulary label drops only its own type
+        // (in reconcile), never the whole batch.
+        relationship: z.string().optional(),
         rationale: z.string().min(1),
         surprising: z.boolean(),
       }),
@@ -51,20 +58,27 @@ const llmOutputSchema = z.object({
     .max(MAX_CONNECTIONS),
 });
 
+/** Map a model-supplied label to the fixed vocabulary, or undefined if it doesn't fit. */
+function normalizeRelationship(raw?: string): RelationshipType | undefined {
+  if (!raw) return undefined;
+  const r = raw.trim().toLowerCase();
+  return RELATIONSHIP_TYPES.find((t) => t === r);
+}
+
 function buildUserMessage(g: Grounding): string {
   const candidateList = g.candidates
     .map((c) => `- slug: ${c.slug} | title: ${c.title}`)
     .join("\n");
-  return `TOPIC: ${g.title}
+  return `ANCHOR TOPIC: ${g.title}
 SLUG: ${g.slug}
 
 FACTUAL SUMMARY (source of truth, do not contradict):
 ${g.summary}
 
-CANDIDATE CONNECTIONS (choose only from these slugs):
+CANDIDATE CONNECTIONS — the TARGETS (choose only from these slugs):
 ${candidateList}
 
-Return JSON: { "summary": string, "connections": [{ "slug": string, "rationale": string, "surprising": boolean }] }`;
+Return JSON: { "summary": string, "connections": [{ "slug": string, "relationship": string, "rationale": string, "surprising": boolean }] }`;
 }
 
 /** Strip accidental code fences / leading prose to find the JSON object. */
@@ -96,6 +110,7 @@ function reconcileConnections(
     out.push({
       slug: real.slug,
       title: real.title,
+      relationship: normalizeRelationship(c.relationship),
       rationale: c.rationale.trim(),
       surprising: c.surprising,
     });
@@ -119,7 +134,7 @@ function ensureExactlyOneSurprising(connections: Connection[]): Connection[] {
 }
 
 /** Heuristic generation used when no API key is configured (keeps app demoable). */
-function fallbackGenerate(g: Grounding, domain: Domain): TapsaNode {
+function fallbackGenerate(g: Grounding, domain?: Domain): TapsaNode {
   const picked: Connection[] = g.candidates.slice(0, MAX_CONNECTIONS).map((c, i) => ({
     slug: c.slug,
     title: c.title,
@@ -151,7 +166,7 @@ function trimToSentences(text: string, max: number): string {
   return sentences.slice(0, max).join(" ").trim();
 }
 
-async function generateWithLLM(g: Grounding, domain: Domain): Promise<TapsaNode> {
+async function generateWithLLM(g: Grounding, domain?: Domain): Promise<TapsaNode> {
   const { apiKey, baseURL, model } = llmConfig();
   const client = new OpenAI({ apiKey, baseURL });
   const userMessage = buildUserMessage(g);
@@ -261,7 +276,7 @@ export async function summarizeSection(
 /** Generate a Tapsa node from grounding. Uses the LLM if a key is configured, else falls back. */
 export async function generateNode(
   g: Grounding,
-  domain: Domain,
+  domain?: Domain,
 ): Promise<TapsaNode> {
   if (!llmConfig().apiKey) {
     return fallbackGenerate(g, domain);
