@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Inter, Lora } from "next/font/google";
 import "./globals.css";
+import { getSiteUrl } from "@/lib/site";
 
 const sans = Inter({
   subsets: ["latin"],
@@ -15,7 +16,7 @@ const serif = Lora({
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"),
+  metadataBase: new URL(getSiteUrl()),
   title: {
     default: "Tapsa — a navigable map of ideas",
     template: "%s · Tapsa",

@@ -37,3 +37,18 @@ export function buildShareUrl(
 }
 
 export const TRAIL_PARAM = PARAM;
+
+/**
+ * Share URL for a revealed connection. Lands the visitor on the target topic,
+ * and the `from` anchor lets the target page render the connection-card OG image
+ * (Anchor — [relationship] — Target) as the link preview.
+ */
+export function buildConnectionShareUrl(
+  origin: string,
+  anchorSlug: string,
+  targetSlug: string,
+): string {
+  const url = new URL(`/topic/${targetSlug}`, origin);
+  url.searchParams.set("from", anchorSlug);
+  return url.toString();
+}

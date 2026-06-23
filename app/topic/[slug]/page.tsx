@@ -5,10 +5,11 @@ import SearchField from "@/components/SearchField";
 import { getOrCreateNode, peekNode, TopicNotFoundError } from "@/lib/node-service";
 import { decodeTrail } from "@/lib/trail";
 import { slugToTitleQuery } from "@/lib/slug";
+import { getSiteUrl } from "@/lib/site";
 import type { Crumb } from "@/components/Breadcrumb";
 
 type Params = { slug: string };
-type Search = { trail?: string };
+type Search = { trail?: string; from?: string };
 
 function prettify(slug: string): string {
   const s = slugToTitleQuery(slug);
@@ -17,18 +18,55 @@ function prettify(slug: string): string {
 
 export async function generateMetadata({
   params,
+  searchParams,
 }: {
   params: Params;
+  searchParams: Search;
 }): Promise<Metadata> {
   try {
     const { node } = await getOrCreateNode(params.slug);
-    const ogUrl = `/api/og?slug=${encodeURIComponent(node.slug)}`;
+    const site = getSiteUrl();
+    const canonical = `${site}/topic/${encodeURIComponent(node.slug)}`;
+
+    // Shared connection card: preview Anchor — [relationship] — Target.
+    const from = typeof searchParams.from === "string" ? searchParams.from : undefined;
+    if (from) {
+      const anchor = await peekNode(from);
+      const conn = anchor?.connections.find((c) => c.slug === node.slug);
+      if (anchor && conn) {
+        const rel = conn.relationship ?? "connects to";
+        const title = `${anchor.title} ${rel} ${node.title}`;
+        const ogUrl = `${site}/api/og?anchor=${encodeURIComponent(anchor.slug)}&target=${encodeURIComponent(node.slug)}`;
+        return {
+          title,
+          description: conn.rationale,
+          alternates: { canonical },
+          openGraph: {
+            title: `${title} · Tapsa`,
+            description: conn.rationale,
+            url: canonical,
+            images: [{ url: ogUrl, width: 1200, height: 630 }],
+            type: "article",
+          },
+          twitter: {
+            card: "summary_large_image",
+            title: `${title} · Tapsa`,
+            description: conn.rationale,
+            images: [ogUrl],
+          },
+        };
+      }
+    }
+
+    const ogUrl = `${site}/api/og?slug=${encodeURIComponent(node.slug)}`;
     return {
       title: node.title,
       description: node.summary,
+      alternates: { canonical },
       openGraph: {
         title: `${node.title} · Tapsa`,
         description: node.summary,
+        url: canonical,
         images: [{ url: ogUrl, width: 1200, height: 630 }],
         type: "article",
       },

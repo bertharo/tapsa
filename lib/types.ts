@@ -1,12 +1,36 @@
 export type Domain = "science" | "history";
 
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 8;
+
+/**
+ * Fixed, editable relationship vocabulary for typed connections. Learning
+ * transfers from STRUCTURAL links ("A causes B"), not vague ones ("A and B are
+ * related"), so every generated connection is classified into exactly one of
+ * these. Edit this list to change the vocabulary the engine may use.
+ */
+export const RELATIONSHIP_TYPES = [
+  "causes",
+  "influenced",
+  "is an instance of",
+  "is part of",
+  "shares a mechanism with",
+  "contrasts with",
+  "preceded",
+] as const;
+
+export type RelationshipType = (typeof RELATIONSHIP_TYPES)[number];
 
 export type Connection = {
   /** Canonical slug of the target node. Always sourced from a real Wikipedia link. */
   slug: string;
   title: string;
-  /** One-line "why this connects". */
+  /**
+   * Typed relationship (anchor → target) from RELATIONSHIP_TYPES. Present on
+   * generated article connections; omitted (rather than guessed) on structural
+   * section navigation and in the heuristic no-key fallback.
+   */
+  relationship?: RelationshipType;
+  /** One precise sentence: specifically HOW the anchor connects to the target. */
   rationale: string;
   /** Exactly one connection per node is marked surprising — the "what you missed" node. */
   surprising: boolean;
@@ -32,7 +56,12 @@ export type TapsaNode = {
   lead?: string;
   /** Wikipedia URL, shown for trust. */
   sourceUrl: string;
-  domain: Domain;
+  /**
+   * Topic category, grounded in Wikidata "instance of" (P31). Optional and
+   * omitted entirely when the type doesn't clearly map to a domain — a wrong
+   * tag in a learning tool is worse than none.
+   */
+  domain?: Domain;
   connections: Connection[];
   /**
    * Sections to "go deeper" into (Early life, Marriages, Scientific career…).

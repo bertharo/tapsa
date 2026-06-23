@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence, LayoutGroup } from "framer-motion";
-import type { Connection, SectionRef, TapsaNode } from "@/lib/types";
+import type { Connection, TapsaNode } from "@/lib/types";
 
 const SPRING = { type: "spring", stiffness: 220, damping: 26, mass: 0.9 } as const;
 
@@ -52,17 +52,12 @@ export default function GraphView({
   const isMobile = useIsMobile();
   const connections = node.connections;
 
-  // Drilling into a section reuses the same travel pipeline as a connection.
-  const goDeeper = (s: SectionRef) =>
-    onTravel({ slug: s.slug, title: s.title, rationale: "", surprising: false });
-
   if (isMobile) {
     return (
       <MobileList
         node={node}
         loadingSlug={loadingSlug}
         onTravel={onTravel}
-        onDeeper={goDeeper}
         onRead={onRead}
       />
     );
@@ -134,7 +129,7 @@ export default function GraphView({
           style={{ left: "50%", top: "50%" }}
           className="absolute z-30 w-[min(64%,320px)]"
         >
-          <CenterCard node={node} onDeeper={goDeeper} />
+          <CenterCard node={node} />
         </motion.div>
       </div>
       <p className="mt-2 text-center text-xs text-ink-faint">
@@ -207,24 +202,20 @@ function OrbitNode({
   );
 }
 
-function CenterCard({
-  node,
-  onDeeper,
-}: {
-  node: TapsaNode;
-  onDeeper?: (section: SectionRef) => void;
-}) {
-  const [open, setOpen] = useState(false);
+function CenterCard({ node }: { node: TapsaNode }) {
+  // Omit the category entirely when it isn't confidently known (never guess).
   const eyebrow =
     node.kind === "section" && node.parentTitle
       ? `${node.parentTitle} · section`
-      : node.domain;
+      : node.domain ?? null;
 
   return (
     <div className="rounded-3xl border border-ink/10 bg-white p-6 text-center shadow-node">
-      <span className="mb-2 inline-block text-[11px] font-medium uppercase tracking-[0.16em] text-accent">
-        {eyebrow}
-      </span>
+      {eyebrow && (
+        <span className="mb-2 inline-block text-[11px] font-medium uppercase tracking-[0.16em] text-accent">
+          {eyebrow}
+        </span>
+      )}
       <h2 className="font-serif text-2xl font-medium leading-tight tracking-tight text-ink">
         {node.title}
       </h2>
@@ -239,43 +230,6 @@ function CenterCard({
       >
         Source: Wikipedia ↗
       </a>
-
-      {node.sections.length > 0 && onDeeper && (
-        <div className="mt-4 border-t border-ink/5 pt-3">
-          <button
-            type="button"
-            onClick={() => setOpen((v) => !v)}
-            className="mx-auto flex items-center gap-1 text-xs font-medium uppercase tracking-[0.14em] text-ink-muted transition hover:text-accent"
-          >
-            Go deeper
-            <span className={`transition-transform ${open ? "rotate-180" : ""}`}>▾</span>
-          </button>
-          <AnimatePresence initial={false}>
-            {open && (
-              <motion.div
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: "auto" }}
-                exit={{ opacity: 0, height: 0 }}
-                transition={{ duration: 0.2 }}
-                className="overflow-hidden"
-              >
-                <div className="mt-2 max-h-48 space-y-1 overflow-y-auto text-left">
-                  {node.sections.map((s) => (
-                    <button
-                      key={s.slug}
-                      type="button"
-                      onClick={() => onDeeper(s)}
-                      className="block w-full rounded-lg px-3 py-1.5 text-sm text-ink-soft transition hover:bg-paper-soft hover:text-ink"
-                    >
-                      {s.title}
-                    </button>
-                  ))}
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
-      )}
     </div>
   );
 }
@@ -312,13 +266,11 @@ function MobileList({
   node,
   loadingSlug,
   onTravel,
-  onDeeper,
   onRead,
 }: {
   node: TapsaNode;
   loadingSlug: string | null;
   onTravel: (conn: Connection) => void;
-  onDeeper: (section: SectionRef) => void;
   onRead?: () => void;
 }) {
   return (
@@ -340,7 +292,7 @@ function MobileList({
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3 }}
       >
-        <CenterCard node={node} onDeeper={onDeeper} />
+        <CenterCard node={node} />
       </motion.div>
 
       <div className="mt-5 space-y-2.5">
