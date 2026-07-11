@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useState } from "react";
 import { titleToSlug } from "@/lib/slug";
@@ -68,22 +69,19 @@ export function TimelineSearchField({
 }
 
 export default function TimelineSearch({ autoFocus = true }: { autoFocus?: boolean }) {
-  const navigate = useTimelineNav();
-
   return (
     <div className="w-full">
       <TimelineSearchField autoFocus={autoFocus} />
 
       <div className="mt-6 flex flex-wrap justify-center gap-2">
         {STARTERS.map((t) => (
-          <button
+          <Link
             key={t}
-            type="button"
-            onClick={() => navigate(t)}
+            href={`/timelines/${titleToSlug(t)}`}
             className="rounded-full border border-ink/10 bg-white px-4 py-2 text-sm text-ink-soft shadow-sm transition hover:border-accent/40 hover:text-ink"
           >
             {t}
-          </button>
+          </Link>
         ))}
       </div>
     </div>
