@@ -1,4 +1,4 @@
-export const TIMELINE_SCHEMA_VERSION = 4;
+export const TIMELINE_SCHEMA_VERSION = 5;
 
 export const MIN_TIMELINE_EVENTS = 5;
 export const SPARSE_EVENT_THRESHOLD = 5;

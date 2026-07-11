@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "next lint",
     "prebake": "tsx scripts/prebake.ts",
-    "test:timeline": "tsx scripts/test-timeline-unit.ts",
+    "test:timeline": "tsx scripts/test-timeline-unit.ts && tsx scripts/test-timeline-extract-gate.ts",
     "verify:timelines": "tsx scripts/verify-timelines.ts",
     "grep:timeline-topics": "tsx scripts/grep-timeline-topics.ts"
   },

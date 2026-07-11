@@ -12,9 +12,17 @@ import { compareParsedDates, parseDateFromText, type ParsedDate } from "./timeli
 import { deriveEras, findEraForSortKey } from "./timeline-eras";
 import { classifyTopicType } from "./timeline-topic-type";
 import { assignTiers, enrichEventSignals } from "./timeline-significance";
+import { passesEventGate } from "./timeline-event-gate";
+import { extractLinkedTitleFromBody, isMetaArticleTitle } from "./timeline-meta";
+import { sanitizeWikiText } from "./timeline-text-hygiene";
 import { timelineCacheKey } from "./timeline-resolve";
 import { titleToSlug } from "./slug";
-import { rankCandidates } from "./wikipedia";
+import {
+  fetchArticlePlainText,
+  fetchSectionContent,
+  fetchSections,
+  rankCandidates,
+} from "./wikipedia";
 import type { CandidateLink } from "./types";
 
 export type RawExtractedEvent = {
@@ -58,11 +66,7 @@ function tokenOverlap(a: string, b: string): number {
 }
 
 function cleanEventText(text: string): string {
-  return text
-    .replace(/\[\d+\]/g, "")
-    .replace(/\s+/g, " ")
-    .replace(/^[\s•*–—-]+/, "")
-    .trim();
+  return sanitizeWikiText(text);
 }
 
 function titleFromBody(body: string, maxWords = 8): string {
@@ -87,55 +91,99 @@ function inferCategory(text: string): EventCategory {
 const SEMICOLON_LINE =
   /^[\s;]*(\d{1,4}\s*(?:BCE?|BC|CE|AD)?)\s*[–—\-:,]\s*(.+)$/i;
 
+function buildOneLiner(title: string, body: string): string {
+  const trimmed = body.trim();
+  if (!trimmed) return title;
+  const titleNorm = title.toLowerCase();
+  let rest = trimmed;
+  if (rest.toLowerCase().startsWith(titleNorm)) {
+    rest = rest.slice(title.length).replace(/^[\s–—\-:,]+/, "").trim();
+  }
+  const candidate = rest.length >= 20 ? rest : trimmed;
+  return candidate.slice(0, 160);
+}
+
+function buildRawEvent(
+  date: ParsedDate,
+  body: string,
+  defaultWikiTitle: string,
+  inLead: boolean,
+  sectionMeta?: { name: string; intro: string },
+  wikiTitleOverride?: string,
+): RawExtractedEvent | null {
+  if (body.length < 8 || JUNK_TITLE.test(body)) return null;
+  const title = titleFromBody(body);
+  const oneLiner = buildOneLiner(title, body);
+  const wikiTitle = (wikiTitleOverride ?? defaultWikiTitle).replace(/ /g, "_");
+  const candidate = { date, title, oneLiner, body, wikiTitle };
+  if (!passesEventGate(candidate, { topicTitle: defaultWikiTitle.replace(/_/g, " ") })) {
+    return null;
+  }
+  return {
+    date,
+    title,
+    oneLiner,
+    body,
+    wikiTitle,
+    inLead,
+    linkCount: 0,
+    hasOwnArticle: Boolean(wikiTitleOverride),
+    sectionName: sectionMeta?.name,
+    sectionIntro: sectionMeta?.intro,
+  };
+}
+
+type LineExtractResult = {
+  event: RawExtractedEvent | null;
+  metaTitle: string | null;
+};
+
 function extractFromLine(
   line: string,
   defaultWikiTitle: string,
   inLead: boolean,
   sectionMeta?: { name: string; intro: string },
-): RawExtractedEvent | null {
+  allowMetaDescent = true,
+): LineExtractResult {
   const trimmed = line.trim();
-  if (trimmed.length < 12) return null;
+  if (trimmed.length < 12) return { event: null, metaTitle: null };
 
   const listMatch = trimmed.match(LINE_START_DATE) ?? trimmed.match(SEMICOLON_LINE);
   if (listMatch) {
     const date = parseDateFromText(listMatch[1]);
     const body = cleanEventText(listMatch[2]);
-    if (!date || body.length < 8 || JUNK_TITLE.test(body)) return null;
-    const title = titleFromBody(body);
+    if (!date || body.length < 8) return { event: null, metaTitle: null };
+
+    if (allowMetaDescent) {
+      const metaTitle = extractLinkedTitleFromBody(body);
+      if (metaTitle) return { event: null, metaTitle };
+      if (isMetaArticleTitle(body)) return { event: null, metaTitle: body };
+    }
+
     return {
-      date,
-      title,
-      oneLiner: body.slice(0, 160),
-      body,
-      wikiTitle: defaultWikiTitle.replace(/ /g, "_"),
-      inLead,
-      linkCount: 0,
-      hasOwnArticle: false,
-      sectionName: sectionMeta?.name,
-      sectionIntro: sectionMeta?.intro,
+      event: buildRawEvent(date, body, defaultWikiTitle, inLead, sectionMeta),
+      metaTitle: null,
     };
   }
 
   const date = parseDateFromText(trimmed);
   if (date) {
     const body = cleanEventText(trimmed.replace(date.display, "").replace(/^[\s–—\-:,]+/, ""));
-    if (body.length < 12 || JUNK_TITLE.test(body)) return null;
-    const title = titleFromBody(body);
+    if (body.length < 12) return { event: null, metaTitle: null };
+
+    if (allowMetaDescent) {
+      const metaTitle = extractLinkedTitleFromBody(body);
+      if (metaTitle) return { event: null, metaTitle };
+      if (isMetaArticleTitle(body)) return { event: null, metaTitle: body };
+    }
+
     return {
-      date,
-      title,
-      oneLiner: body.slice(0, 160),
-      body,
-      wikiTitle: defaultWikiTitle.replace(/ /g, "_"),
-      inLead,
-      linkCount: 0,
-      hasOwnArticle: false,
-      sectionName: sectionMeta?.name,
-      sectionIntro: sectionMeta?.intro,
+      event: buildRawEvent(date, body, defaultWikiTitle, inLead, sectionMeta),
+      metaTitle: null,
     };
   }
 
-  return null;
+  return { event: null, metaTitle: null };
 }
 
 function extractInlineSentences(
@@ -151,37 +199,41 @@ function extractInlineSentences(
     const dateStr = m[1];
     const sentence = cleanEventText(m[2]);
     const date = parseDateFromText(dateStr);
-    if (!date || sentence.length < 12 || JUNK_TITLE.test(sentence)) continue;
-    out.push({
-      date,
-      title: titleFromBody(sentence),
-      oneLiner: sentence.slice(0, 160),
-      body: sentence,
-      wikiTitle: defaultWikiTitle.replace(/ /g, "_"),
-      inLead,
-      linkCount: 0,
-      hasOwnArticle: false,
-      sectionName: sectionMeta?.name,
-      sectionIntro: sectionMeta?.intro,
-    });
+    if (!date || sentence.length < 12 || isMetaArticleTitle(sentence)) continue;
+    const ev = buildRawEvent(date, sentence, defaultWikiTitle, inLead, sectionMeta);
+    if (ev) out.push(ev);
   }
   return out;
 }
+
+type SourceExtractResult = {
+  events: RawExtractedEvent[];
+  metaTitles: string[];
+};
 
 function extractFromSource(
   source: ChronologicalSource,
   leadText: string,
   mainArticleTitle: string,
-): RawExtractedEvent[] {
+  allowMetaDescent = true,
+): SourceExtractResult {
   const defaultWiki = source.articleTitle.replace(/ /g, "_");
   const events: RawExtractedEvent[] = [];
+  const metaTitles: string[] = [];
   const allLinks: CandidateLink[] = [];
 
   const leadChunk = source.text;
   const inLeadRoot = leadText.length > 0 && leadChunk.slice(0, 200) === leadText.slice(0, 200);
   for (const line of leadChunk.split(/\n+/)) {
-    const ev = extractFromLine(line, defaultWiki, inLeadRoot);
-    if (ev) events.push(ev);
+    const { event, metaTitle } = extractFromLine(
+      line,
+      defaultWiki,
+      inLeadRoot,
+      undefined,
+      allowMetaDescent,
+    );
+    if (event) events.push(event);
+    if (metaTitle) metaTitles.push(metaTitle);
   }
   events.push(...extractInlineSentences(leadChunk, defaultWiki, inLeadRoot));
 
@@ -190,19 +242,82 @@ function extractFromSource(
     const meta = { name: section.name, intro: section.intro };
     const lines = section.text.split(/\n+/);
     for (const line of lines) {
-      const ev = extractFromLine(line, defaultWiki, false, meta);
-      if (ev) {
-        events.push(enrichEventSignals(ev, section.links, mainArticleTitle));
+      const { event, metaTitle } = extractFromLine(
+        line,
+        defaultWiki,
+        false,
+        meta,
+        allowMetaDescent,
+      );
+      if (event) {
+        events.push(enrichEventSignals(event, section.links, mainArticleTitle));
       }
+      if (metaTitle) metaTitles.push(metaTitle);
     }
     for (const ev of extractInlineSentences(section.text, defaultWiki, false, meta)) {
       events.push(enrichEventSignals(ev, section.links, mainArticleTitle));
     }
   }
 
-  return events.map((ev) =>
+  const enriched = events.map((ev) =>
     ev.sectionName ? ev : enrichEventSignals(ev, allLinks, mainArticleTitle),
   );
+
+  return { events: enriched, metaTitles };
+}
+
+async function descendMetaArticles(
+  metaTitles: string[],
+  mainArticleTitle: string,
+  seen: Set<string>,
+): Promise<RawExtractedEvent[]> {
+  const out: RawExtractedEvent[] = [];
+  const unique = [...new Set(metaTitles.map((t) => t.trim()).filter(Boolean))];
+
+  for (const metaTitle of unique) {
+    const key = metaTitle.toLowerCase();
+    if (seen.has(key) || !isMetaArticleTitle(metaTitle)) continue;
+    seen.add(key);
+
+    try {
+      const text = await fetchArticlePlainText(metaTitle, 16000);
+      if (text.length < 120) continue;
+
+      const wikiSections = await fetchSections(metaTitle);
+      const sections: ChronologicalSource["sections"] = [];
+      for (const sec of wikiSections.slice(0, 12)) {
+        const { text: st, links } = await fetchSectionContent(metaTitle, sec.index);
+        if (st.length > 80) {
+          const { extractSectionIntro } = await import("./timeline-eras");
+          sections.push({
+            name: sec.line,
+            index: sec.index,
+            text: st,
+            intro: extractSectionIntro(st),
+            links,
+          });
+        }
+      }
+
+      const childSource: ChronologicalSource = {
+        kind: "timeline_article",
+        articleTitle: metaTitle,
+        text,
+        sections,
+      };
+      const { events: childEvents } = extractFromSource(
+        childSource,
+        "",
+        mainArticleTitle,
+        false,
+      );
+      out.push(...childEvents);
+    } catch {
+      /* skip failed descent */
+    }
+  }
+
+  return out;
 }
 
 export function dedupeEvents(events: RawExtractedEvent[]): RawExtractedEvent[] {
@@ -306,10 +421,29 @@ export async function extractTimelineFromSources(
 ): Promise<TapsaTimeline> {
   const { chronology, displayTitle, requestedSlug } = input;
   let raw: RawExtractedEvent[] = [];
+  const metaQueue: string[] = [];
+  const descended = new Set<string>();
 
   for (const source of chronology.sources) {
-    raw.push(...extractFromSource(source, chronology.lead, chronology.mainTitle));
+    const { events, metaTitles } = extractFromSource(
+      source,
+      chronology.lead,
+      chronology.mainTitle,
+    );
+    raw.push(...events);
+    metaQueue.push(...metaTitles);
   }
+
+  if (metaQueue.length) {
+    raw.push(...(await descendMetaArticles(metaQueue, chronology.mainTitle, descended)));
+  }
+
+  raw = raw.filter((ev) =>
+    passesEventGate(
+      { date: ev.date, title: ev.title, oneLiner: ev.oneLiner, body: ev.body },
+      { topicTitle: chronology.mainTitle },
+    ),
+  );
 
   raw = dedupeEvents(raw);
   raw.sort((a, b) => compareParsedDates(a.date, b.date));
