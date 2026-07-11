@@ -5,6 +5,7 @@ import {
   TopicNotFoundError,
 } from "./timeline-errors";
 import { extractTimelineFromSources, isTimelineSufficient } from "./timeline-extract";
+import { applyTimelineEditorial } from "./timeline-editorial";
 import { deriveShellEras } from "./timeline-eras";
 import { fetchGatedWikiImage } from "./timeline-images-gate";
 import type { TapsaTimeline, TimelineEvent, TimelineShell } from "./timeline-types";
@@ -96,6 +97,7 @@ export const getOrCreateTimeline = cache(async (rawTopic: string): Promise<Timel
     throw new TimelineTooThinError(requestedSlug, displayTitle);
   }
 
+  timeline = await applyTimelineEditorial(timeline, chronology.lead);
   timeline = await attachGatedImages(timeline);
   await store.set({ ...timeline, cacheKey: revisionCacheKey });
   return { timeline, cacheHit: false };

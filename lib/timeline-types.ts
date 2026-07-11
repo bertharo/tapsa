@@ -52,6 +52,8 @@ export type TimelineEvent = {
   image?: TimelineImageMeta | null;
   /** @deprecated use image.url — kept for transitional UI compatibility */
   imageUrl?: string;
+  /** One sentence on why this event mattered — from editorial pass when available. */
+  significance?: string;
 };
 
 export type TimelineEra = {
@@ -95,4 +97,6 @@ export type TapsaTimeline = {
   orientation: string;
   sparse: boolean;
   adjacentTopics?: AdjacentTopic[];
+  /** Hash of wiki bodies — used for editorial cache invalidation. */
+  contentHash?: string;
 };

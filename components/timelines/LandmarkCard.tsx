@@ -59,6 +59,11 @@ export default function LandmarkCard({
         <p className="mt-2 line-clamp-3 text-sm leading-relaxed text-ink-muted">
           {event.oneLiner}
         </p>
+        {event.significance && (
+          <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-ink-faint italic">
+            {event.significance}
+          </p>
+        )}
       </div>
     </button>
   );

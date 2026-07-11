@@ -13,6 +13,7 @@
     "grep:timeline-topics": "tsx scripts/grep-timeline-topics.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.111.0",
     "framer-motion": "^11.11.17",
     "next": "14.2.18",
     "openai": "^4.104.0",
