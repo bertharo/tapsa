@@ -1,6 +1,10 @@
 import type { Metadata } from "next";
 import TimelineExplorer from "@/components/timelines/TimelineExplorer";
-import { getOrCreateTimeline, TopicNotFoundError } from "@/lib/timeline-service";
+import {
+  getOrCreateTimeline,
+  TimelineTooThinError,
+  TopicNotFoundError,
+} from "@/lib/timeline-service";
 import { getSiteUrl } from "@/lib/site";
 import { slugToTitleQuery } from "@/lib/slug";
 import Link from "next/link";
@@ -40,6 +44,23 @@ export default async function TimelineTopicPage({ params }: { params: Params }) 
     const result = await getOrCreateTimeline(params.slug);
     timeline = result.timeline;
   } catch (err) {
+    if (err instanceof TimelineTooThinError) {
+      return (
+        <main className="mx-auto flex min-h-screen w-full max-w-xl flex-col items-center justify-center px-5 text-center">
+          <h1 className="font-serif text-3xl font-medium text-ink">Not enough history here yet.</h1>
+          <p className="mt-3 text-ink-muted">
+            This topic doesn&rsquo;t have enough dated history for a timeline yet. Try a broader
+            subject.
+          </p>
+          <div className="mt-6 w-full">
+            <TimelineSearch />
+          </div>
+          <Link href="/timelines" className="mt-6 text-sm text-ink-faint hover:text-ink-muted">
+            ← All timelines
+          </Link>
+        </main>
+      );
+    }
     if (err instanceof TopicNotFoundError) {
       return (
         <main className="mx-auto flex min-h-screen w-full max-w-xl flex-col items-center justify-center px-5 text-center">

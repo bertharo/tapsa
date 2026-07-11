@@ -1,46 +1,44 @@
-export const TIMELINE_SCHEMA_VERSION = 1;
+export const TIMELINE_SCHEMA_VERSION = 3;
 
 export const EVENT_CATEGORIES = [
-  "war",
-  "invention",
-  "person",
-  "culture",
-  "economy",
-  "science",
+  "SCIENCE",
+  "MATHEMATICS",
+  "PHYSICS",
+  "ASTRONOMY",
+  "OBSERVATION",
+  "PHILOSOPHY",
+  "CULTURE",
+  "TECHNOLOGY",
 ] as const;
 
 export type EventCategory = (typeof EVENT_CATEGORIES)[number];
 
 export type TimelineEvent = {
   id: string;
-  /** Sort key; negative for BCE. */
-  year: number;
-  /** End year for ranges; omit for point events. */
-  yearEnd?: number;
-  /** Display label, e.g. "c. 1500" or "1760–1840". */
-  yearLabel: string;
+  yearDisplay: string;
+  yearSort: number;
   title: string;
-  hook: string;
-  detail: string;
-  era: string;
-  significance: 1 | 2 | 3;
+  oneLiner: string;
+  body: string;
   category: EventCategory;
+  eraId: string;
+  /** Wikipedia article title, underscore form. */
+  wikiTitle: string;
   wikipediaSlug: string;
-  wikipediaTitle: string;
+  /** Lead thumbnail URL, cached at generation time. */
+  imageUrl?: string;
 };
 
 export type TimelineEra = {
   id: string;
   name: string;
-  startYear: number;
-  endYear: number;
-  description: string;
+  start: number;
+  end: number;
 };
 
 export type TapsaTimeline = {
   slug: string;
   title: string;
-  /** User-facing topic phrase. */
   topic: string;
   events: TimelineEvent[];
   eras: TimelineEra[];
@@ -48,4 +46,9 @@ export type TapsaTimeline = {
   generatedAt: string;
   schemaVersion: number;
   origin: "llm" | "fallback";
+  /** Resolved Wikipedia article title. */
+  wikiTitle: string;
+  /** Wikipedia revision id at generation time — cache invalidates on change. */
+  revisionId: number;
+  cacheKey: string;
 };

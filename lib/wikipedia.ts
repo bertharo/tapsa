@@ -465,6 +465,57 @@ export async function fetchTimelineGrounding(slug: string): Promise<{
   };
 }
 
+/** Full article plain-text extract for timeline event extraction (not just intro). */
+export async function fetchArticlePlainText(title: string, maxChars = 16000): Promise<string> {
+  const params = new URLSearchParams({
+    action: "query",
+    format: "json",
+    prop: "extracts",
+    explaintext: "1",
+    redirects: "1",
+    titles: title,
+    origin: "*",
+  });
+  try {
+    const res = await fetch(`${WIKI_ACTION}?${params.toString()}`, {
+      headers: HEADERS,
+      next: { revalidate: 60 * 60 * 24 },
+    });
+    if (!res.ok) return "";
+    const data = (await res.json()) as {
+      query?: { pages?: Record<string, { extract?: string }> };
+    };
+    const extract = Object.values(data.query?.pages ?? {})[0]?.extract ?? "";
+    return extract
+      .replace(/\r/g, "")
+      .replace(/[ \t]+\n/g, "\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim()
+      .slice(0, maxChars);
+  } catch {
+    return "";
+  }
+}
+
+/** Lead image for a Wikipedia page — thumbnail preferred, original as fallback. */
+export async function fetchWikiLeadImage(wikiTitle: string): Promise<string | null> {
+  const encoded = encodeURIComponent(wikiTitle.replace(/\s+/g, "_"));
+  try {
+    const res = await fetch(`${WIKI_REST}/page/summary/${encoded}?redirect=true`, {
+      headers: HEADERS,
+      next: { revalidate: 60 * 60 * 24 * 7 },
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as {
+      thumbnail?: { source?: string };
+      originalimage?: { source?: string };
+    };
+    return data.thumbnail?.source ?? data.originalimage?.source ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export type WikiSection = {
   index: string;
   line: string;

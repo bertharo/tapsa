@@ -27,6 +27,7 @@ const config: Config = {
       fontFamily: {
         sans: ["var(--font-sans)", "ui-sans-serif", "system-ui", "sans-serif"],
         serif: ["var(--font-serif)", "ui-serif", "Georgia", "serif"],
+        "timeline-serif": ["var(--font-timeline-serif)", "ui-serif", "Georgia", "serif"],
       },
       boxShadow: {
         node: "0 1px 2px rgba(10,10,11,0.04), 0 8px 24px rgba(10,10,11,0.06)",
