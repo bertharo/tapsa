@@ -1,18 +1,13 @@
 "use client";
 
-import { useState } from "react";
 import Link from "next/link";
+import { useState } from "react";
 import type { TapsaTimeline, TimelineEvent } from "@/lib/timeline-types";
 import TimelineCanvas from "./TimelineCanvas";
 import EventDetailPanel from "./EventDetailPanel";
 import { TimelineSearchField } from "./TimelineSearch";
 
-export default function TimelineExplorer({
-  initialTimeline,
-}: {
-  initialTimeline: TapsaTimeline;
-}) {
-  const [timeline] = useState(initialTimeline);
+export default function TimelineExplorer({ timeline }: { timeline: TapsaTimeline }) {
   const [selected, setSelected] = useState<TimelineEvent | null>(null);
 
   return (

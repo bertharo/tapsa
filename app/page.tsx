@@ -20,6 +20,26 @@ export default function HomePage() {
         <SearchField />
       </div>
 
+      <Link
+        href="/timelines"
+        className="mt-8 flex w-full items-center justify-between gap-3 rounded-2xl border border-ink/10 bg-white px-5 py-4 text-left shadow-node transition hover:border-accent/40 hover:shadow-glow"
+      >
+        <div>
+          <p className="text-xs font-medium uppercase tracking-[0.16em] text-accent">
+            Tapsa Timelines
+          </p>
+          <p className="mt-1 font-serif text-lg font-medium text-ink">
+            Travel through the history of anything
+          </p>
+          <p className="mt-0.5 text-sm text-ink-muted">
+            Scroll forward through time — countries, technologies, sports, and more.
+          </p>
+        </div>
+        <span className="shrink-0 text-xl text-ink-faint" aria-hidden>
+          →
+        </span>
+      </Link>
+
       <div className="mt-10 w-full">
         <p className="mb-3 text-center text-xs font-medium uppercase tracking-[0.18em] text-ink-faint">
           Or fall in somewhere

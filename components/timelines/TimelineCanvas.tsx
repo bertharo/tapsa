@@ -3,7 +3,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import type { TapsaTimeline, TimelineEvent } from "@/lib/timeline-types";
-import { CATEGORY_LABELS, eraTheme, yearSpan, yearToX } from "@/lib/timeline-themes";
+import { CATEGORY_LABELS, eraTheme, formatDisplayYear, yearSpan, yearToX } from "@/lib/timeline-themes";
 
 const TRACK_PADDING = 120;
 const PX_PER_YEAR = 14;
@@ -108,7 +108,7 @@ export default function TimelineCanvas({ timeline, selectedId, onSelect }: Props
                 className="absolute bottom-10 text-[10px] font-medium tabular-nums text-ink-faint"
                 style={{ left: x, transform: "translateX(-50%)" }}
               >
-                {year < 0 ? `${Math.abs(year)} BCE` : year}
+                {formatDisplayYear(year)}
               </div>
             );
           })}

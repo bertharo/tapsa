@@ -147,7 +147,13 @@ export default function Explorer({
           Tapsa
         </Link>
         <div className="flex items-center gap-2">
-          <span className="hidden text-xs text-ink-faint sm:inline">
+          <Link
+            href="/timelines"
+            className="hidden rounded-full border border-ink/10 bg-white px-3.5 py-1.5 text-sm font-medium text-ink-soft shadow-sm transition hover:border-accent/40 hover:text-ink sm:inline"
+          >
+            Timelines
+          </Link>
+          <span className="hidden text-xs text-ink-faint md:inline">
             {depth} {depth === 1 ? "stop" : "stops"} deep
           </span>
           <button

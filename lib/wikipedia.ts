@@ -440,6 +440,31 @@ export async function fetchGrounding(slug: string): Promise<Grounding> {
   };
 }
 
+/** Lightweight grounding for timelines — summary + lead only, no candidate pool. */
+export async function fetchTimelineGrounding(slug: string): Promise<{
+  slug: string;
+  title: string;
+  summary: string;
+  lead: string;
+  sourceUrl: string;
+}> {
+  const summary = await fetchSummary(slug);
+  const canonicalTitle = summary.title;
+  const canonicalSlug = titleToSlug(canonicalTitle);
+  const lead = await fetchLeadExtract(canonicalTitle);
+  const sourceUrl =
+    summary.content_urls?.desktop?.page ??
+    `https://en.wikipedia.org/wiki/${encodeURIComponent(canonicalTitle.replace(/\s+/g, "_"))}`;
+
+  return {
+    slug: canonicalSlug,
+    title: canonicalTitle,
+    summary: summary.extract,
+    lead: lead || summary.extract,
+    sourceUrl,
+  };
+}
+
 export type WikiSection = {
   index: string;
   line: string;

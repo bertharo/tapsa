@@ -60,5 +60,5 @@ export default async function TimelineTopicPage({ params }: { params: Params }) 
     throw err;
   }
 
-  return <TimelineExplorer initialTimeline={timeline} />;
+  return <TimelineExplorer timeline={timeline} />;
 }

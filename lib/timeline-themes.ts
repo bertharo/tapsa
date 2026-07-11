@@ -1,11 +1,11 @@
 /** Visual palette for era bands — cycles if more eras than themes. */
 export const ERA_THEMES = [
-  { bg: "#f5efe6", accent: "#8b6914", label: "Ancient" },
-  { bg: "#eef2e8", accent: "#4a6741", label: "Medieval" },
-  { bg: "#e8eef4", accent: "#3d5a80", label: "Early modern" },
-  { bg: "#f0ece8", accent: "#6b4c3b", label: "Industrial" },
-  { bg: "#ebeaf5", accent: "#4a3d80", label: "Modern" },
-  { bg: "#e8f4f0", accent: "#2d6a5a", label: "Digital" },
+  { bg: "#f5efe6", accent: "#8b6914" },
+  { bg: "#eef2e8", accent: "#4a6741" },
+  { bg: "#e8eef4", accent: "#3d5a80" },
+  { bg: "#f0ece8", accent: "#6b4c3b" },
+  { bg: "#ebeaf5", accent: "#4a3d80" },
+  { bg: "#e8f4f0", accent: "#2d6a5a" },
 ] as const;
 
 export function eraTheme(index: number) {

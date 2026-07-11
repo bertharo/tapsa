@@ -1,23 +1,21 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useCallback, useState } from "react";
+import { titleToSlug } from "@/lib/slug";
 
-const STARTERS = [
-  "England",
-  "Computers",
-  "Accounting",
-  "Basketball",
-  "Coffee",
-  "Silk Road",
-];
+const STARTERS = ["England", "Computers", "Accounting", "Basketball", "Coffee", "Silk Road"];
 
-function topicToSlug(topic: string): string {
-  return topic
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, "")
-    .replace(/\s+/g, "-");
+function useTimelineNav() {
+  const router = useRouter();
+  return useCallback(
+    (topic: string) => {
+      const slug = titleToSlug(topic);
+      if (!slug) return;
+      router.push(`/timelines/${slug}`);
+    },
+    [router],
+  );
 }
 
 export function TimelineSearchField({
@@ -27,22 +25,22 @@ export function TimelineSearchField({
   autoFocus?: boolean;
   compact?: boolean;
 }) {
-  const router = useRouter();
+  const navigate = useTimelineNav();
   const [value, setValue] = useState("");
   const [loading, setLoading] = useState(false);
 
-  function go(topic: string) {
+  function submit(topic: string) {
     const q = topic.trim();
     if (!q) return;
     setLoading(true);
-    router.push(`/timelines/${topicToSlug(q)}`);
+    navigate(q);
   }
 
   return (
     <form
       onSubmit={(e) => {
         e.preventDefault();
-        go(value);
+        submit(value);
       }}
       className="relative w-full"
     >
@@ -70,13 +68,7 @@ export function TimelineSearchField({
 }
 
 export default function TimelineSearch({ autoFocus = true }: { autoFocus?: boolean }) {
-  const router = useRouter();
-
-  function go(topic: string) {
-    const slug = topicToSlug(topic);
-    if (!slug) return;
-    router.push(`/timelines/${slug}`);
-  }
+  const navigate = useTimelineNav();
 
   return (
     <div className="w-full">
@@ -87,7 +79,7 @@ export default function TimelineSearch({ autoFocus = true }: { autoFocus?: boole
           <button
             key={t}
             type="button"
-            onClick={() => go(t)}
+            onClick={() => navigate(t)}
             className="rounded-full border border-ink/10 bg-white px-4 py-2 text-sm text-ink-soft shadow-sm transition hover:border-accent/40 hover:text-ink"
           >
             {t}
