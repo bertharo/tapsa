@@ -6,13 +6,76 @@ import { titleToSlug } from "./slug";
 
 const MIN_EVENTS = 8;
 const MAX_EVENTS = 30;
+const MAX_ARTICLE_CHARS = 9000;
+const MAX_OUTPUT_TOKENS = 4096;
+
+/** Timeline extraction models — 8b default for Groq free-tier headroom. */
+const TIMELINE_MODELS = [
+  process.env.TAPSA_TIMELINE_MODEL,
+  "llama-3.1-8b-instant",
+  "llama-3.3-70b-versatile",
+].filter((m, i, a): m is string => Boolean(m) && a.indexOf(m) === i);
 
 function llmConfig() {
   return {
     baseURL: process.env.TAPSA_LLM_BASE_URL ?? "https://api.groq.com/openai/v1",
-    model: process.env.TAPSA_MODEL ?? "llama-3.3-70b-versatile",
+    models: TIMELINE_MODELS.length > 0 ? TIMELINE_MODELS : ["llama-3.1-8b-instant"],
     apiKey: process.env.GROQ_API_KEY ?? process.env.TAPSA_LLM_API_KEY ?? "",
   };
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRateLimitError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase();
+  const status = (err as { status?: number })?.status;
+  return status === 429 || msg.includes("429") || msg.includes("rate limit");
+}
+
+function parseRetryAfterMs(message: string): number | null {
+  const m = message.match(/try again in (?:(\d+)m)?(?:(\d+(?:\.\d+)?)s)?/i);
+  if (!m) return null;
+  const minutes = m[1] ? Number(m[1]) : 0;
+  const seconds = m[2] ? Number(m[2]) : 0;
+  if (!minutes && !seconds) return null;
+  return Math.ceil((minutes * 60 + seconds) * 1000);
+}
+
+function trimArticleForLlm(text: string): string {
+  if (text.length <= MAX_ARTICLE_CHARS) return text;
+  const head = Math.floor(MAX_ARTICLE_CHARS * 0.72);
+  const tail = MAX_ARTICLE_CHARS - head - 48;
+  return `${text.slice(0, head)}\n\n[…middle of article omitted for length…]\n\n${text.slice(-tail)}`;
+}
+
+async function chatWithRetry(
+  client: OpenAI,
+  model: string,
+  messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+): Promise<string> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      const resp = await client.chat.completions.create({
+        model,
+        max_tokens: MAX_OUTPUT_TOKENS,
+        temperature: 0.35,
+        response_format: { type: "json_object" },
+        messages,
+      });
+      return resp.choices[0]?.message?.content ?? "";
+    } catch (err) {
+      lastErr = err;
+      if (!isRateLimitError(err) || attempt === 3) break;
+      const wait =
+        parseRetryAfterMs(err instanceof Error ? err.message : String(err)) ??
+        Math.min(1500 * 2 ** attempt, 12_000);
+      await sleep(wait);
+    }
+  }
+  throw lastErr;
 }
 
 export class TimelineExtractionError extends Error {
@@ -131,26 +194,13 @@ function validateAndNormalize(raw: RawOutput, slug: string): { events: TimelineE
 }
 
 function buildUserMessage(wikiTitle: string, articleText: string): string {
-  return `WIKIPEDIA ARTICLE: ${wikiTitle}
+  const text = trimArticleForLlm(articleText);
+  return `ARTICLE: ${wikiTitle}
 
-ARTICLE TEXT (source of truth — only extract events with dates found here):
-${articleText}
+${text}
 
-Return JSON matching this schema exactly:
-{
-  "topic": string,
-  "eras": [{ "id": "kebab-case", "name": string, "start": number, "end": number }],
-  "events": [{
-    "year_display": string,
-    "year_sort": integer,
-    "title": string,
-    "one_liner": string,
-    "body": string,
-    "category": "SCIENCE"|"MATHEMATICS"|"PHYSICS"|"ASTRONOMY"|"OBSERVATION"|"PHILOSOPHY"|"CULTURE"|"TECHNOLOGY",
-    "era_id": string,
-    "wiki_title": string
-  }]
-}`;
+Return JSON: { topic, eras:[{id,name,start,end}], events:[{year_display,year_sort,title,one_liner,body,category,era_id,wiki_title}] }
+Minimum ${MIN_EVENTS} real dated events. Raw JSON only.`;
 }
 
 type TimelineMeta = {
@@ -167,49 +217,65 @@ export async function generateTimeline(
   sourceUrl: string,
   meta: TimelineMeta,
 ): Promise<TapsaTimeline> {
-  const { apiKey, baseURL, model } = llmConfig();
+  const { apiKey, baseURL, models } = llmConfig();
   if (!apiKey) {
     throw new TimelineExtractionError("GROQ_API_KEY required for timeline generation.");
   }
 
   const client = new OpenAI({ apiKey, baseURL });
   const userMessage = buildUserMessage(wikiTitle, articleText);
+  const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+    { role: "system", content: EXTRACTION_SYSTEM },
+    { role: "user", content: userMessage },
+  ];
 
-  const attempt = async (extra?: string) => {
-    const resp = await client.chat.completions.create({
-      model,
-      max_tokens: 8192,
-      temperature: 0.35,
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: EXTRACTION_SYSTEM },
-        { role: "user", content: extra ? `${userMessage}\n\n${extra}` : userMessage },
-      ],
-    });
-    const text = resp.choices[0]?.message?.content ?? "";
-    const parsed = rawOutputSchema.parse(JSON.parse(extractJson(text)));
-    const { events, eras } = validateAndNormalize(parsed, slug);
-    if (events.length < MIN_EVENTS) {
-      throw new TimelineExtractionError(
-        `Only ${events.length} valid events after validation (need ${MIN_EVENTS}).`,
-      );
+  const runExtraction = async (extra?: string) => {
+    const msgs = extra
+      ? [...messages.slice(0, 1), { role: "user" as const, content: `${userMessage}\n\n${extra}` }]
+      : messages;
+
+    let lastErr: unknown;
+    for (const model of models) {
+      try {
+        const text = await chatWithRetry(client, model, msgs);
+        const parsed = rawOutputSchema.parse(JSON.parse(extractJson(text)));
+        const { events, eras } = validateAndNormalize(parsed, slug);
+        if (events.length < MIN_EVENTS) {
+          throw new TimelineExtractionError(
+            `Only ${events.length} valid events after validation (need ${MIN_EVENTS}).`,
+          );
+        }
+        return { parsed, events, eras };
+      } catch (err) {
+        lastErr = err;
+        if (isRateLimitError(err)) continue;
+        throw err;
+      }
     }
-    return { parsed, events, eras };
+    throw lastErr;
   };
 
   let result: { parsed: RawOutput; events: TimelineEvent[]; eras: TimelineEra[] };
   let firstMessage = "";
   try {
-    result = await attempt();
+    result = await runExtraction();
   } catch (firstErr) {
+    if (isRateLimitError(firstErr)) {
+      throw new TimelineExtractionError(
+        firstErr instanceof Error ? firstErr.message : String(firstErr),
+      );
+    }
     firstMessage = firstErr instanceof Error ? firstErr.message : String(firstErr);
     try {
-      result = await attempt(
-        `Your previous output failed validation (${firstMessage}). ` +
-          `Return ONLY valid JSON with at least ${MIN_EVENTS} real dated events. ` +
-          `Never use section headings or chapter numbers as events or years.`,
+      result = await runExtraction(
+        `Validation failed (${firstMessage}). Return valid JSON with ≥${MIN_EVENTS} dated events. No section headings as events.`,
       );
-    } catch {
+    } catch (secondErr) {
+      if (isRateLimitError(secondErr)) {
+        throw new TimelineExtractionError(
+          secondErr instanceof Error ? secondErr.message : String(secondErr),
+        );
+      }
       throw new TimelineExtractionError(
         `Timeline extraction failed after retry. First error: ${firstMessage}`,
       );
@@ -237,20 +303,14 @@ export async function extractTimelineJson(
   wikiTitle: string,
   articleText: string,
 ): Promise<RawOutput> {
-  const { apiKey, baseURL, model } = llmConfig();
+  const { apiKey, baseURL, models } = llmConfig();
   if (!apiKey) throw new Error("GROQ_API_KEY required.");
   const client = new OpenAI({ apiKey, baseURL });
-  const resp = await client.chat.completions.create({
-    model,
-    max_tokens: 8192,
-    temperature: 0.35,
-    response_format: { type: "json_object" },
-    messages: [
-      { role: "system", content: EXTRACTION_SYSTEM },
-      { role: "user", content: buildUserMessage(wikiTitle, articleText) },
-    ],
-  });
-  const text = resp.choices[0]?.message?.content ?? "";
+  const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+    { role: "system", content: EXTRACTION_SYSTEM },
+    { role: "user", content: buildUserMessage(wikiTitle, articleText) },
+  ];
+  const text = await chatWithRetry(client, models[0], messages);
   const parsed = rawOutputSchema.parse(JSON.parse(extractJson(text)));
   const { events } = validateAndNormalize(parsed, "verify");
   if (events.length < MIN_EVENTS) {
