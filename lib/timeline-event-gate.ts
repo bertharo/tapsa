@@ -1,5 +1,6 @@
 import type { ParsedDate } from "./timeline-dates";
 import { isMetaArticleTitle } from "./timeline-meta";
+import { bodyNoisePenalty } from "./timeline-section-weight";
 import { normalizeForComparison } from "./timeline-text-hygiene";
 
 export type EventGateContext = {
@@ -113,6 +114,7 @@ export function passesEventGate(
 
   if (!hasSpecificDate(candidate.date, maxRange)) return false;
   if (isJunkWikiExtract(candidate.body) || isJunkWikiExtract(candidate.oneLiner)) return false;
+  if (bodyNoisePenalty(candidate.body) < 0) return false;
   if (!titleDescribesOccurrence(candidate.title, context.topicTitle)) return false;
   if (textsAreRestatement(candidate.title, candidate.oneLiner)) return false;
   if (textsAreRestatement(candidate.title, candidate.body)) return false;

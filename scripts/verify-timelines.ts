@@ -139,6 +139,25 @@ async function verifyWorldWarII(): Promise<void> {
   const landmarks = timeline.events.filter((e) => e.tier === "landmark");
   if (landmarks.length < 3) throw new Error("Expected multiple landmark WWII events");
 
+  const junkLandmark =
+    /forced labour|representative democracy|casualties main article|genocide, war crimes|POWs undertaking|league of nations was established/i;
+  for (const e of landmarks) {
+    if (junkLandmark.test(`${e.title} ${e.body}`)) {
+      throw new Error(`Background noise promoted to landmark: "${e.title}"`);
+    }
+  }
+
+  const actionLandmarks = landmarks.filter((e) =>
+    /\b(invasion|battle|attack|surrender|fall of|landings?|pearl harbor|normandy|declaration of war)\b/i.test(
+      e.title,
+    ),
+  );
+  if (actionLandmarks.length < 2) {
+    throw new Error(
+      `Expected action-oriented landmarks, got: ${landmarks.slice(0, 6).map((e) => e.title).join(" | ")}`,
+    );
+  }
+
   const titles = landmarks.map((e) => e.title.toLowerCase()).join(" ");
   const hasRecognizable =
     /pearl harbor|normandy|d-day|invasion of poland|german invasion|december 1941|hiroshima|battle of britain|stalingrad/.test(

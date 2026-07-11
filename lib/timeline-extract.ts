@@ -11,6 +11,7 @@ import { compareParsedDates, parseDateFromText, parseDateWithSectionContext, typ
 import { deriveEras, findEraForSortKey } from "./timeline-eras";
 import { classifyTopicType } from "./timeline-topic-type";
 import { assignTiers, enrichEventSignals } from "./timeline-significance";
+import { isBackgroundSection } from "./timeline-section-weight";
 import { isJunkWikiExtract, passesEventGate } from "./timeline-event-gate";
 import { extractLinkedTitleFromBody, isMetaArticleTitle, shouldDescendMetaArticle } from "./timeline-meta";
 import { sanitizeWikiText } from "./timeline-text-hygiene";
@@ -363,9 +364,6 @@ type SourceExtractResult = {
 const NAV_SECTION =
   /^(see also|external links|references|notes|further reading|bibliography|main timelines|timelines|summary|overview)$/i;
 
-const BACKGROUND_SECTION =
-  /^(background|causes|aftermath|start and end|casualties|genocide|impact|legacy|assessment|effects|consequences)/i;
-
 function extractFromSource(
   source: ChronologicalSource,
   leadText: string,
@@ -400,6 +398,7 @@ function extractFromSource(
 
   for (const section of source.sections) {
     if (NAV_SECTION.test(section.name.trim())) continue;
+    if (isBackgroundSection(section.name)) continue;
 
     allLinks.push(...section.links);
     const meta = { name: section.name, intro: section.intro };
@@ -432,16 +431,14 @@ function extractFromSource(
         ),
       );
     }
-    if (!BACKGROUND_SECTION.test(section.name.trim())) {
-      for (const ev of extractProseDatedEvents(section.text, defaultWiki, false, meta)) {
-        events.push(
-          resolveEventFromLinks(
-            enrichEventSignals(ev, section.links, mainArticleTitle),
-            section.links,
-            mainArticleTitle,
-          ),
-        );
-      }
+    for (const ev of extractProseDatedEvents(section.text, defaultWiki, false, meta)) {
+      events.push(
+        resolveEventFromLinks(
+          enrichEventSignals(ev, section.links, mainArticleTitle),
+          section.links,
+          mainArticleTitle,
+        ),
+      );
     }
   }
 
@@ -620,7 +617,8 @@ export async function extractTimelineFromSources(
     metaQueue.push(...metaTitles);
   }
 
-  if (chronology.lead.length > 80) {
+  const totalSections = chronology.sources.reduce((n, s) => n + s.sections.length, 0);
+  if (chronology.lead.length > 80 && totalSections < 12) {
     const leadEvents = extractProseDatedEvents(
       chronology.lead,
       chronology.mainTitle.replace(/ /g, "_"),

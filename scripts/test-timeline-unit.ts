@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { compareParsedDates, parseDateFromText } from "../lib/timeline-dates";
 import { assignTiers, scoreSignificance } from "../lib/timeline-significance";
+import { sectionLandmarkWeight, actionTitleWeight } from "../lib/timeline-section-weight";
 import { dedupeEvents, type RawExtractedEvent } from "../lib/timeline-extract";
 import { clusterEventsIntoEras, deriveEras, sectionsFormChronologicalChapters } from "../lib/timeline-eras";
 import { gateImage } from "../lib/timeline-images-gate";
@@ -117,10 +118,38 @@ function testCategories() {
   assert.equal(categoryFromWikiCategories(["Random disambiguation pages"]), undefined);
 }
 
+function testSectionWeight() {
+  assert.ok(sectionLandmarkWeight("War breaks out in the Pacific (1941)") > 0);
+  assert.ok(sectionLandmarkWeight("Background") < 0);
+  assert.ok(actionTitleWeight("Invasion of Poland") > 0);
+  assert.ok(scoreSignificance({
+    date: { sortKey: 1939, precision: "day", display: "1939", subSort: 0 },
+    title: "Invasion of Poland",
+    oneLiner: "Germany invaded Poland",
+    body: "Germany invaded Poland on 1 September 1939.",
+    wikiTitle: "Invasion_of_Poland",
+    inLead: false,
+    linkCount: 1,
+    hasOwnArticle: true,
+    sectionName: "War breaks out in Europe (1939–1940)",
+  }) > scoreSignificance({
+    date: { sortKey: 1920, precision: "year", display: "1920", subSort: 0 },
+    title: "League of Nations",
+    oneLiner: "League formed",
+    body: "League of Nations was established in 1920.",
+    wikiTitle: "World_War_II",
+    inLead: false,
+    linkCount: 0,
+    hasOwnArticle: false,
+    sectionName: "Background",
+  }));
+}
+
 testDates();
 testSignificance();
 testDedupe();
 testEras();
 testImages();
 testCategories();
+testSectionWeight();
 console.log("timeline unit checks passed");
