@@ -1,5 +1,5 @@
 import { titleToSlug } from "./slug";
-import { TopicNotFoundError } from "./wikipedia";
+import { TopicNotFoundError } from "./timeline-errors";
 
 const WIKI_REST = "https://en.wikipedia.org/api/rest_v1";
 const WIKI_ACTION = "https://en.wikipedia.org/w/api.php";
@@ -41,7 +41,7 @@ async function restSummaryByTitle(titleQuery: string): Promise<WikiSummary | nul
     next: { revalidate: 60 * 60 * 24 },
   });
   if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`Wikipedia summary failed (${res.status})`);
+  if (!res.ok) return null;
   const data = (await res.json()) as WikiSummary;
   if (data.type === "https://mediawiki.org/wiki/HyperSwitch/errors/not_found") return null;
   return data;

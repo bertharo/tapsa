@@ -1,22 +1,17 @@
 import type { CandidateLink, Domain, Grounding } from "./types";
 import { slugToTitleQuery, titleToSlug } from "./slug";
+import { TopicNotFoundError } from "./timeline-errors";
+
+export { TopicNotFoundError };
 
 const WIKI_REST = "https://en.wikipedia.org/api/rest_v1";
 const WIKI_ACTION = "https://en.wikipedia.org/w/api.php";
 const WIKIDATA_ACTION = "https://www.wikidata.org/w/api.php";
 
-// Wikimedia asks all clients to send a descriptive User-Agent.
 const UA =
   "Tapsa/0.1 (knowledge-graph explorer; https://tapsa.ai; contact@tapsa.ai)";
 
 const HEADERS = { "User-Agent": UA, "Api-User-Agent": UA } as const;
-
-export class TopicNotFoundError extends Error {
-  constructor(public slug: string) {
-    super(`Topic not found: ${slug}`);
-    this.name = "TopicNotFoundError";
-  }
-}
 
 type WikiSummary = {
   type: string;

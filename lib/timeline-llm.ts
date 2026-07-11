@@ -169,7 +169,7 @@ export async function generateTimeline(
 ): Promise<TapsaTimeline> {
   const { apiKey, baseURL, model } = llmConfig();
   if (!apiKey) {
-    throw new Error("GROQ_API_KEY required for timeline generation.");
+    throw new TimelineExtractionError("GROQ_API_KEY required for timeline generation.");
   }
 
   const client = new OpenAI({ apiKey, baseURL });

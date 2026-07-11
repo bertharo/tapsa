@@ -2,9 +2,12 @@ import type { Metadata } from "next";
 import TimelineExplorer from "@/components/timelines/TimelineExplorer";
 import {
   getOrCreateTimeline,
-  TimelineTooThinError,
-  TopicNotFoundError,
 } from "@/lib/timeline-service";
+import {
+  isTimelineTooThin,
+  isTimelineUnavailable,
+  isTopicNotFound,
+} from "@/lib/timeline-errors";
 import { getSiteUrl } from "@/lib/site";
 import { slugToTitleQuery } from "@/lib/slug";
 import Link from "next/link";
@@ -15,6 +18,27 @@ type Params = { slug: string };
 function prettify(slug: string): string {
   const s = slugToTitleQuery(slug);
   return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+function TimelineErrorShell({
+  title,
+  body,
+}: {
+  title: string;
+  body: string;
+}) {
+  return (
+    <main className="mx-auto flex min-h-screen w-full max-w-xl flex-col items-center justify-center px-5 text-center">
+      <h1 className="font-serif text-3xl font-medium text-ink">{title}</h1>
+      <p className="mt-3 text-ink-muted">{body}</p>
+      <div className="mt-6 w-full">
+        <TimelineSearch />
+      </div>
+      <Link href="/timelines" className="mt-6 text-sm text-ink-faint hover:text-ink-muted">
+        ← All timelines
+      </Link>
+    </main>
+  );
 }
 
 export async function generateMetadata({ params }: { params: Params }): Promise<Metadata> {
@@ -44,41 +68,36 @@ export default async function TimelineTopicPage({ params }: { params: Params }) 
     const result = await getOrCreateTimeline(params.slug);
     timeline = result.timeline;
   } catch (err) {
-    if (err instanceof TimelineTooThinError) {
+    if (isTimelineTooThin(err)) {
       return (
-        <main className="mx-auto flex min-h-screen w-full max-w-xl flex-col items-center justify-center px-5 text-center">
-          <h1 className="font-serif text-3xl font-medium text-ink">Not enough history here yet.</h1>
-          <p className="mt-3 text-ink-muted">
-            This topic doesn&rsquo;t have enough dated history for a timeline yet. Try a broader
-            subject.
-          </p>
-          <div className="mt-6 w-full">
-            <TimelineSearch />
-          </div>
-          <Link href="/timelines" className="mt-6 text-sm text-ink-faint hover:text-ink-muted">
-            ← All timelines
-          </Link>
-        </main>
+        <TimelineErrorShell
+          title="Not enough history here yet."
+          body="This topic doesn't have enough dated history for a timeline yet. Try a broader subject."
+        />
       );
     }
-    if (err instanceof TopicNotFoundError) {
+    if (isTopicNotFound(err)) {
       return (
-        <main className="mx-auto flex min-h-screen w-full max-w-xl flex-col items-center justify-center px-5 text-center">
-          <h1 className="font-serif text-3xl font-medium text-ink">That timeline went cold.</h1>
-          <p className="mt-3 text-ink-muted">
-            We couldn&rsquo;t find <span className="font-medium text-ink">{prettify(params.slug)}</span>{" "}
-            on Wikipedia. Try another phrasing.
-          </p>
-          <div className="mt-6 w-full">
-            <TimelineSearch />
-          </div>
-          <Link href="/timelines" className="mt-6 text-sm text-ink-faint hover:text-ink-muted">
-            ← All timelines
-          </Link>
-        </main>
+        <TimelineErrorShell
+          title="That timeline went cold."
+          body={`We couldn't find ${prettify(params.slug)} on Wikipedia. Try another phrasing.`}
+        />
       );
     }
-    throw err;
+    if (isTimelineUnavailable(err)) {
+      const body =
+        err.reason === "rate_limit"
+          ? "Timeline generation is briefly rate-limited. Please try again in a few minutes."
+          : "Timeline generation isn't configured on this deployment yet.";
+      return <TimelineErrorShell title="Timelines are taking a breather." body={body} />;
+    }
+    console.error("[timelines]", err);
+    return (
+      <TimelineErrorShell
+        title="Something went wrong building this timeline."
+        body="Please try again in a moment, or search for a different topic."
+      />
+    );
   }
 
   return <TimelineExplorer timeline={timeline} />;

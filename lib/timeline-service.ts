@@ -1,5 +1,10 @@
 import { cache } from "react";
 import { getTimelineStore } from "./timeline-cache";
+import {
+  TimelineTooThinError,
+  TimelineUnavailableError,
+  TopicNotFoundError,
+} from "./timeline-errors";
 import { attachEventImages } from "./timeline-images";
 import { generateTimeline, TimelineExtractionError } from "./timeline-llm";
 import type { TapsaTimeline } from "./timeline-types";
@@ -9,22 +14,20 @@ import {
   timelineCacheKey,
   type ResolvedTimelineArticle,
 } from "./timeline-resolve";
-import { TopicNotFoundError } from "./wikipedia";
 import { titleToSlug } from "./slug";
 
-export { TopicNotFoundError };
-
-export class TimelineTooThinError extends Error {
-  constructor(
-    public slug: string,
-    public title: string,
-  ) {
-    super(`Not enough dated history for timeline: ${title}`);
-    this.name = "TimelineTooThinError";
-  }
-}
+export { TimelineTooThinError, TopicNotFoundError, TimelineUnavailableError };
 
 export type TimelineResult = { timeline: TapsaTimeline; cacheHit: boolean };
+
+const JUNK_EVENT = /^chapter\s*\d/i;
+
+function isUsableCached(timeline: TapsaTimeline): boolean {
+  if (timeline.schemaVersion !== 3) return false;
+  if (!timeline.cacheKey || !timeline.wikiTitle) return false;
+  if (!Array.isArray(timeline.events) || timeline.events.length < 8) return false;
+  return !timeline.events.some((e) => JUNK_EVENT.test(e.title));
+}
 
 async function buildTimeline(
   requestedSlug: string,
@@ -58,6 +61,23 @@ async function extractWithFallback(
   }
 }
 
+function mapGenerationError(err: unknown, slug: string, title: string): Error {
+  const msg = err instanceof Error ? err.message.toLowerCase() : "";
+  if (msg.includes("groq_api_key") || msg.includes("tapsa_llm_api_key")) {
+    return new TimelineUnavailableError("missing_api_key");
+  }
+  if (msg.includes("rate limit") || msg.includes("429")) {
+    return new TimelineUnavailableError("rate_limit");
+  }
+  if (
+    err instanceof TimelineExtractionError ||
+    (err as Error)?.name === "TimelineExtractionError"
+  ) {
+    return new TimelineTooThinError(slug, title);
+  }
+  return err instanceof Error ? err : new TimelineUnavailableError("unknown");
+}
+
 export const getOrCreateTimeline = cache(async (rawTopic: string): Promise<TimelineResult> => {
   const requestedSlug = titleToSlug(rawTopic);
   if (!requestedSlug) throw new Error("Missing topic.");
@@ -74,7 +94,7 @@ export const getOrCreateTimeline = cache(async (rawTopic: string): Promise<Timel
 
   const cacheKey = timelineCacheKey(candidate.title, candidate.revisionId);
   const cached = await store.get(cacheKey);
-  if (cached) {
+  if (cached && isUsableCached(cached)) {
     return {
       timeline: { ...cached, slug: requestedSlug, title: displayTitle },
       cacheHit: true,
@@ -85,10 +105,7 @@ export const getOrCreateTimeline = cache(async (rawTopic: string): Promise<Timel
   try {
     timeline = await extractWithFallback(requestedSlug, displayTitle, primary, candidate);
   } catch (err) {
-    if (err instanceof TimelineExtractionError) {
-      throw new TimelineTooThinError(requestedSlug, displayTitle);
-    }
-    throw err;
+    throw mapGenerationError(err, requestedSlug, displayTitle);
   }
 
   timeline = await attachEventImages(timeline);
