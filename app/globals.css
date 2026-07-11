@@ -48,3 +48,17 @@ body {
     animation: none;
   }
 }
+
+/* Horizontal timeline scroller — cinematic, unobtrusive. */
+.timeline-scroll {
+  scroll-behavior: smooth;
+  scrollbar-width: thin;
+  scrollbar-color: theme("colors.ink.faint") transparent;
+}
+.timeline-scroll::-webkit-scrollbar {
+  height: 8px;
+}
+.timeline-scroll::-webkit-scrollbar-thumb {
+  background: theme("colors.ink.faint");
+  border-radius: 9999px;
+}
