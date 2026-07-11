@@ -7,6 +7,7 @@ import { dedupeEvents, type RawExtractedEvent } from "../lib/timeline-extract";
 import { clusterEventsIntoEras, deriveEras, sectionsFormChronologicalChapters } from "../lib/timeline-eras";
 import { gateImage } from "../lib/timeline-images-gate";
 import { categoryFromWikiCategories } from "../lib/timeline-event-category";
+import { selectEventsAcrossEras, capAncientEventFlood } from "../lib/timeline-event-select";
 
 function testDates() {
   const bce = parseDateFromText("44 BC");
@@ -145,6 +146,33 @@ function testSectionWeight() {
   }));
 }
 
+function testEventSelection() {
+  const mk = (year: number, title: string): RawExtractedEvent => ({
+    date: { sortKey: year, precision: "year", display: String(year), subSort: 0 },
+    title,
+    oneLiner: title,
+    body: `${title} happened in ${year}.`,
+    wikiTitle: title.replace(/ /g, "_"),
+    inLead: false,
+    linkCount: 0,
+    hasOwnArticle: false,
+  });
+
+  const ancient = Array.from({ length: 50 }, (_, i) => mk(100 + i * 10, `Ancient ${i}`));
+  const modern = [1950, 1970, 1990, 2010].map((y) => mk(y, `Modern ${y}`));
+  const all = [...ancient, ...modern];
+  const eras = [
+    { id: "era-ancient", name: "Ancient", start: 100, end: 1800 },
+    { id: "era-modern", name: "Modern", start: 1900, end: 2100 },
+  ];
+  const tiers = assignTiers(all, eras);
+  const capped = capAncientEventFlood(all, "CONCEPT");
+  assert.ok(capped.length < all.length);
+  const selected = selectEventsAcrossEras(capped, eras, tiers, 20);
+  assert.ok(selected.some((e) => e.date.sortKey >= 1950));
+  assert.ok(selected.length <= 20);
+}
+
 testDates();
 testSignificance();
 testDedupe();
@@ -152,4 +180,5 @@ testEras();
 testImages();
 testCategories();
 testSectionWeight();
+testEventSelection();
 console.log("timeline unit checks passed");

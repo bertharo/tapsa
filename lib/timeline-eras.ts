@@ -62,9 +62,17 @@ function cleanHeading(name: string): string {
 
 /** First sentence of a section body — connective tissue source. */
 export function extractSectionIntro(text: string): string {
-  const para = text.split(/\n+/).find((p) => p.trim().length > 20) ?? text;
-  const sentence = para.match(/^[^.!?]+[.!?]/)?.[0] ?? para.slice(0, 160);
-  return sentence.trim();
+  const paragraphs = text.split(/\n+/).map((p) => p.trim()).filter((p) => p.length > 20);
+  for (const para of paragraphs) {
+    const sentence = para.match(/^[^.!?]+[.!?]/)?.[0] ?? para.slice(0, 160);
+    const cleaned = sentence.replace(/\s*\[?\s*edit\s*\]?\s*/gi, " ").trim();
+    if (!cleaned || cleaned.length < 20) continue;
+    if (/\bmain articles?:/i.test(cleaned)) continue;
+    if (/for a chronological guide, see/i.test(cleaned)) continue;
+    if (/^see also\b/i.test(cleaned)) continue;
+    return cleaned;
+  }
+  return "";
 }
 
 function headingSortKey(heading: string, sectionText: string): number | null {

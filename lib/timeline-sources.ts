@@ -79,6 +79,25 @@ function findHistorySection(sections: { line: string; index: string }[]): string
   return hit?.index ?? null;
 }
 
+/** Timeline articles are long — fetch early + late sections so modern history isn't cut off. */
+function sectionsForSource(
+  wikiSections: { line: string; index: string }[],
+  kind: ChronologicalSourceKind,
+): { line: string; index: string }[] {
+  const limit = kind === "timeline_article" ? 70 : 40;
+  if (wikiSections.length <= limit) return wikiSections;
+  const head = wikiSections.slice(0, Math.ceil(limit / 2));
+  const tail = wikiSections.slice(-Math.floor(limit / 2));
+  const seen = new Set<string>();
+  const merged: { line: string; index: string }[] = [];
+  for (const sec of [...head, ...tail]) {
+    if (seen.has(sec.index)) continue;
+    seen.add(sec.index);
+    merged.push(sec);
+  }
+  return merged;
+}
+
 async function buildSource(
   kind: ChronologicalSourceKind,
   articleTitle: string,
@@ -104,7 +123,7 @@ async function buildSource(
 
   const wikiSections = await fetchSections(articleTitle);
   const sectionTexts: ChronologicalSection[] = [];
-  for (const sec of wikiSections.slice(0, 40)) {
+  for (const sec of sectionsForSource(wikiSections, kind)) {
     const { text: st, links } = await fetchSectionContent(articleTitle, sec.index);
     if (st.length > 80) {
       sectionTexts.push({
@@ -124,6 +143,49 @@ function countWords(text: string): number {
   return text.split(/\s+/).filter(Boolean).length;
 }
 
+/** Plural queries like "Computers" often map to gerund chronology articles ("computing"). */
+function chronologyBases(base: string, mainTitle: string): string[] {
+  const forms = new Set<string>();
+  const add = (s: string) => {
+    const t = s.trim().replace(/^(the|a|an)\s+/i, "");
+    if (t.length > 2) forms.add(t);
+  };
+  add(base);
+  add(mainTitle);
+  const bLower = base.toLowerCase();
+  const mLower = mainTitle.toLowerCase().replace(/^(the|a|an)\s+/i, "");
+  if (bLower.endsWith("ers")) add(`${bLower.slice(0, -3)}ing`);
+  if (mLower.endsWith("er")) add(`${mLower.slice(0, -2)}ing`);
+  if (bLower.endsWith("s") && bLower.length > 4) add(bLower.slice(0, -1));
+  return [...forms];
+}
+
+function buildChronologyCandidates(
+  base: string,
+  mainTitle: string,
+): { kind: ChronologicalSourceKind; title: string }[] {
+  const out: { kind: ChronologicalSourceKind; title: string }[] = [];
+  const seen = new Set<string>();
+  const push = (kind: ChronologicalSourceKind, title: string) => {
+    const key = title.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ kind, title });
+  };
+
+  for (const topic of chronologyBases(base, mainTitle)) {
+    const withThe = topic.match(/^(the\s+)/i) ? topic : `the ${topic}`;
+    push("history_article", `History of ${topic}`);
+    push("history_article", `History of ${withThe}`);
+    push("timeline_article", `Timeline of ${topic}`);
+    push("timeline_article", `Timeline of ${withThe}`);
+  }
+
+  push("history_section", mainTitle);
+  push("main_article", mainTitle);
+  return out;
+}
+
 /**
  * Hunt chronological sources in priority order; merge when primary is thin.
  */
@@ -132,15 +194,7 @@ export async function resolveChronologicalSources(
   userQuery: string,
 ): Promise<ResolvedChronology> {
   const base = baseTopic(userQuery) || baseTopic(mainTitle);
-  const withThe = base.match(/^(the\s+)/i) ? base : `the ${base}`;
-  const candidates: { kind: ChronologicalSourceKind; title: string }[] = [
-    { kind: "history_article", title: `History of ${base}` },
-    { kind: "history_article", title: `History of ${withThe}` },
-    { kind: "timeline_article", title: `Timeline of ${base}` },
-    { kind: "timeline_article", title: `Timeline of ${withThe}` },
-    { kind: "history_section", title: mainTitle },
-    { kind: "main_article", title: mainTitle },
-  ];
+  const candidates = buildChronologyCandidates(base, mainTitle);
 
   const sources: ChronologicalSource[] = [];
   const seenTitles = new Set<string>();

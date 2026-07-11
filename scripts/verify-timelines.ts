@@ -189,6 +189,34 @@ async function verifyEditorialFallback(): Promise<void> {
   }
 }
 
+async function verifyComputers(): Promise<void> {
+  console.log("\n── Computers (span coverage) ──");
+  const timeline = await buildTimeline("Computers");
+
+  const maxYear = Math.max(...timeline.events.map((e) => e.sortKey));
+  if (maxYear < 1950) {
+    throw new Error(
+      `Computers timeline stops too early (${maxYear}); expected modern computing events`,
+    );
+  }
+
+  const wreckLandmark = timeline.events.find(
+    (e) => e.tier === "landmark" && /\bwreck\b/i.test(e.title),
+  );
+  if (wreckLandmark) {
+    throw new Error(`Maritime wreck promoted to landmark: "${wreckLandmark.title}"`);
+  }
+
+  const junkTransition = timeline.events.some((e) =>
+    /main articles?:/i.test(e.transitionalText ?? ""),
+  );
+  if (junkTransition) throw new Error("Wiki nav boilerplate in transitional text");
+
+  console.log(`  max year: ${maxYear}`);
+  console.log(`  events: ${timeline.events.length}`);
+  console.log("  ✓ pass");
+}
+
 async function main() {
   console.log("Timeline acceptance verification");
   let failed = 0;
@@ -196,6 +224,7 @@ async function main() {
   const checks = [
     ...ACCEPTANCE_QUERIES.map((q) => () => verifyQuery(q)),
     () => verifyWorldWarII(),
+    () => verifyComputers(),
     () => verifyEditorialFallback(),
   ];
 

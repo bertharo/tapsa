@@ -30,6 +30,8 @@ const DANGLING_TITLE_END =
 export function isJunkWikiExtract(text: string): boolean {
   if (WIKI_JUNK.test(text)) return true;
   if (/\[?\s*edit\s*\]?/i.test(text)) return true;
+  if (/\bmain articles?:/i.test(text)) return true;
+  if (/for a chronological guide, see/i.test(text)) return true;
   if ((text.match(/\btimeline of\b/gi) ?? []).length >= 2) return true;
   if (/main timelines/i.test(text)) return true;
   if (/^see also\b|^main article\b|^doi\s*:/i.test(text.trim())) return true;
@@ -42,6 +44,7 @@ function isWeakTitle(title: string): boolean {
   if (DANGLING_TITLE_END.test(title)) return true;
   if (/^(also|main|wars|campaigns|territories)$/i.test(title)) return true;
   if (/see also/i.test(title)) return true;
+  if (/^it was (discovered|built|invented|developed|introduced)\b/i.test(title)) return true;
   return false;
 }
 

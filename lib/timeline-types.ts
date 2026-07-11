@@ -1,7 +1,9 @@
-export const TIMELINE_SCHEMA_VERSION = 5;
+export const TIMELINE_SCHEMA_VERSION = 6;
 
 export const MIN_TIMELINE_EVENTS = 5;
 export const SPARSE_EVENT_THRESHOLD = 5;
+/** Max events returned per timeline — selected across eras, not oldest-first. */
+export const MAX_TIMELINE_EVENTS = 48;
 
 export const EVENT_CATEGORIES = [
   "MILITARY",

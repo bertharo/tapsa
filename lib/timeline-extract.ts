@@ -13,6 +13,11 @@ import { classifyTopicType } from "./timeline-topic-type";
 import { assignTiers, enrichEventSignals } from "./timeline-significance";
 import { isBackgroundSection } from "./timeline-section-weight";
 import { isJunkWikiExtract, passesEventGate } from "./timeline-event-gate";
+import {
+  capAncientEventFlood,
+  selectEventsAcrossEras,
+  trimErasToEvents,
+} from "./timeline-event-select";
 import { extractLinkedTitleFromBody, isMetaArticleTitle, shouldDescendMetaArticle } from "./timeline-meta";
 import { sanitizeWikiText } from "./timeline-text-hygiene";
 import { timelineCacheKey } from "./timeline-resolve";
@@ -127,6 +132,12 @@ function pickBestEventLink(body: string, links: CandidateLink[]): CandidateLink 
     if (/\b(world war|second world war|first world war)\b/i.test(title) && !focus.includes("world war")) {
       score -= 40;
     }
+    if (/\bwreck\b/i.test(title) && /\b(mechanism|computer|computing|calculator|device|analog)\b/i.test(focus)) {
+      score -= 30;
+    }
+    if (/\b(mechanism|computer|computing|calculator|microprocessor|transistor)\b/i.test(title)) {
+      score += 15;
+    }
     if (score > bestScore) {
       best = link;
       bestScore = score;
@@ -185,6 +196,17 @@ function resolveEventFromLinks(
     if (link && focusIncludesPhrase(ev.body, link.title)) {
       title = titleFromBody(ev.body, link.title);
       wikiTitle = link.title.replace(/ /g, "_");
+    } else if (/\bmechanism\b/i.test(ev.body)) {
+      const mechanismLink = links.find(
+        (l) =>
+          /\bmechanism\b/i.test(l.title) &&
+          !isMetaArticleTitle(l.title) &&
+          focusIncludesPhrase(ev.body, l.title.replace(/ mechanism/i, "")),
+      );
+      if (mechanismLink) {
+        title = mechanismLink.title;
+        wikiTitle = mechanismLink.title.replace(/ /g, "_");
+      }
     }
   } else {
     const narrative = titleFromNarrativeSentence(ev.body);
@@ -520,7 +542,24 @@ export function dedupeEvents(events: RawExtractedEvent[]): RawExtractedEvent[] {
     if (!dup) out.push(ev);
   }
 
-  return out;
+  return dropRedundantWreckEvents(out);
+}
+
+/** When Wikipedia lists both "Antikythera mechanism" and "Antikythera wreck", keep the subject. */
+function dropRedundantWreckEvents(events: RawExtractedEvent[]): RawExtractedEvent[] {
+  return events.filter((ev) => {
+    const wreckMatch = ev.title.match(/^(.+?)\s+wreck$/i);
+    if (!wreckMatch) return true;
+    const prefix = wreckMatch[1]!.toLowerCase();
+    const hasSubject = events.some(
+      (other) =>
+        other !== ev &&
+        other.title.toLowerCase().includes(prefix) &&
+        !/\bwreck\b/i.test(other.title) &&
+        !/^it was /i.test(other.title),
+    );
+    return !hasSubject;
+  });
 }
 
 function transitionalTextFor(
@@ -532,6 +571,8 @@ function transitionalTextFor(
   if (!prevLandmark || eraId !== prevEraId) return undefined;
   const intro = ev.sectionIntro?.trim();
   if (!intro || intro.length < 20) return undefined;
+  if (isJunkWikiExtract(intro)) return undefined;
+  if (/\bmain articles?:/i.test(intro)) return undefined;
   if (normalizeTitle(intro) === normalizeTitle(ev.oneLiner)) return undefined;
   if (normalizeTitle(intro) === normalizeTitle(prevLandmark.oneLiner)) return undefined;
   return intro.slice(0, 220);
@@ -667,8 +708,17 @@ export async function extractTimelineFromSources(
     events: eventPoints,
     topicType,
   });
-  const tiers = assignTiers(raw, eras);
-  const events = toTimelineEvents(raw, eras, tiers);
+  const capped = capAncientEventFlood(raw, topicType);
+  const tiers = assignTiers(capped, eras);
+  const selected = selectEventsAcrossEras(capped, eras, tiers);
+  let events = toTimelineEvents(selected, eras, tiers);
+  const trimmedEras = trimErasToEvents(eras, events);
+  if (trimmedEras.length !== eras.length) {
+    events = events.map((e) => {
+      const era = findEraForSortKey(trimmedEras, e.sortKey);
+      return era.id === e.eraId ? e : { ...e, eraId: era.id };
+    });
+  }
 
   const orientation =
     chronology.lead.split(/[.!?]/)[0]?.trim().slice(0, 220) ||
@@ -695,8 +745,8 @@ export async function extractTimelineFromSources(
     slug: requestedSlug,
     title: displayTitle.trim() || chronology.mainTitle,
     topic: chronology.mainTitle,
-    events: events.slice(0, 40),
-    eras,
+    events,
+    eras: trimmedEras,
     sourceUrl: chronology.sourceUrl,
     generatedAt: new Date().toISOString(),
     schemaVersion: TIMELINE_SCHEMA_VERSION,

@@ -4,6 +4,7 @@ import type { RawExtractedEvent } from "./timeline-extract";
 import {
   actionTitleWeight,
   bodyNoisePenalty,
+  topicDriftPenalty,
   isBackgroundSection,
   sectionLandmarkWeight,
 } from "./timeline-section-weight";
@@ -23,6 +24,7 @@ export function scoreSignificance(ev: RawExtractedEvent): number {
   score += sectionLandmarkWeight(ev.sectionName);
   score += actionTitleWeight(ev.title);
   score += bodyNoisePenalty(ev.body);
+  score += topicDriftPenalty(ev.title, ev.body);
 
   if (isBackgroundSection(ev.sectionName) && !ev.hasOwnArticle) score -= 4;
 

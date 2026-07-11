@@ -29,6 +29,13 @@ export function bodyNoisePenalty(body: string): number {
   return BODY_NOISE.test(body) ? -10 : 0;
 }
 
+/** Maritime archaeology titles that sit next to computing subjects in timeline lists. */
+export function topicDriftPenalty(title: string, body: string): number {
+  if (!/\bwreck\b/i.test(title)) return 0;
+  if (/\b(mechanism|computer|computing|calculator|device|analog)\b/i.test(body)) return -12;
+  return 0;
+}
+
 export function isBackgroundSection(sectionName?: string): boolean {
   if (!sectionName) return false;
   return BACKGROUND_SECTION.test(sectionName.toLowerCase());
