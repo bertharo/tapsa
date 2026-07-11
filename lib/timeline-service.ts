@@ -29,7 +29,9 @@ function isUsableCached(timeline: TapsaTimeline): boolean {
 async function attachGatedImages(timeline: TapsaTimeline): Promise<TapsaTimeline> {
   const events: TimelineEvent[] = await Promise.all(
     timeline.events.map(async (e) => {
-      if (e.tier !== "landmark" && e.image) return e;
+      if (e.tier !== "landmark") {
+        return { ...e, image: null, imageUrl: undefined };
+      }
       const image = await fetchGatedWikiImage(e.wikiTitle);
       return {
         ...e,
@@ -39,6 +41,22 @@ async function attachGatedImages(timeline: TapsaTimeline): Promise<TapsaTimeline
     }),
   );
   return { ...timeline, events };
+}
+
+/** Read a cached timeline without triggering extraction — for OG/metadata. */
+export async function peekTimeline(rawTopic: string): Promise<TapsaTimeline | null> {
+  try {
+    const displayTitle = rawTopic.trim();
+    if (!displayTitle) return null;
+    const mainTitle = await resolveArticleTitle(displayTitle);
+    const chronology = await resolveChronologicalSources(mainTitle, displayTitle);
+    const store = getTimelineStore();
+    const cached = await store.get(timelineCacheKey(mainTitle, chronology.revisionId));
+    if (cached && isUsableCached(cached)) return cached;
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 export const getOrCreateTimeline = cache(async (rawTopic: string): Promise<TimelineResult> => {

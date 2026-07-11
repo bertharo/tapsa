@@ -2,21 +2,40 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 import TimelineSlugClient from "@/components/timelines/TimelineSlugClient";
 import TimelineGeneratingShell from "@/components/timelines/TimelineGeneratingShell";
+import { peekTimeline } from "@/lib/timeline-service";
 import { getSiteUrl } from "@/lib/site";
 import { slugToTitleQuery } from "@/lib/slug";
 
 type Params = { slug: string };
+type Search = { q?: string };
 
 function prettify(slug: string): string {
   const s = slugToTitleQuery(slug);
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
-export function generateMetadata({ params }: { params: Params }): Metadata {
-  const title = prettify(params.slug);
+export async function generateMetadata({
+  params,
+  searchParams,
+}: {
+  params: Params;
+  searchParams?: Search;
+}): Promise<Metadata> {
+  const query = searchParams?.q?.trim() || slugToTitleQuery(params.slug);
+  const fallbackTitle = prettify(params.slug);
   const site = getSiteUrl();
   const canonical = `${site}/timeline/${encodeURIComponent(params.slug)}`;
-  const description = `Travel through the history of ${title} — an interactive timeline from Wikipedia.`;
+
+  let title = fallbackTitle;
+  let description = `Travel through the history of ${fallbackTitle} — an interactive timeline from Wikipedia.`;
+
+  const peeked = await peekTimeline(query);
+  if (peeked) {
+    title = peeked.title;
+    description = peeked.orientation;
+  }
+
+  const ogUrl = `${site}/api/og?timeline=${encodeURIComponent(params.slug)}&q=${encodeURIComponent(query)}`;
 
   return {
     title: `${title} · Timelines`,
@@ -28,11 +47,13 @@ export function generateMetadata({ params }: { params: Params }): Metadata {
       url: canonical,
       type: "article",
       siteName: "Tapsa",
+      images: [{ url: ogUrl, width: 1200, height: 630, alt: `${title} timeline` }],
     },
     twitter: {
       card: "summary_large_image",
       title: `${title} · Tapsa Timelines`,
       description,
+      images: [ogUrl],
     },
   };
 }

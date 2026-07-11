@@ -61,7 +61,9 @@ export default function TimelineEventDrawer({
     return () => window.removeEventListener("keydown", onKey);
   }, [event, onClose]);
 
-  const connections = node?.connections ?? [];
+  const connections = (node?.connections ?? []).filter(
+    (c) => !c.slug.includes("~") && c.title.trim().length > 2,
+  );
   const summary = node?.summary ?? event?.oneLiner ?? "";
   const body = event?.body ?? node?.lead ?? "";
 

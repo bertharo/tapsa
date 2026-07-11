@@ -15,7 +15,7 @@ function displayQuery(q: string): string {
 }
 
 function timelineCacheKey(slug: string, query: string): string {
-  return `tapsa:timeline:v1:${slug}:${query.trim().toLowerCase()}`;
+  return `tapsa:timeline:v4:${slug}:${query.trim().toLowerCase()}`;
 }
 
 function readSessionTimeline(slug: string, query: string): TapsaTimeline | null {

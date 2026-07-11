@@ -13,6 +13,7 @@ export default function TimelineExplorer({ timeline }: { timeline: TapsaTimeline
   const [selected, setSelected] = useState<TimelineEvent | null>(null);
   const [activeEraId, setActiveEraId] = useState<string | null>(timeline.eras[0]?.id ?? null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const savedScrollTop = useRef(0);
   const colors = useMemo(() => eraColorMap(timeline.eras), [timeline.eras]);
 
   const scrollToEra = useCallback((eraId: string) => {
@@ -22,6 +23,18 @@ export default function TimelineExplorer({ timeline }: { timeline: TapsaTimeline
     if (!root || !el) return;
     const top = el.getBoundingClientRect().top - root.getBoundingClientRect().top + root.scrollTop - 12;
     root.scrollTo({ top, behavior: "smooth" });
+  }, []);
+
+  const handleSelect = useCallback((event: TimelineEvent) => {
+    if (scrollRef.current) savedScrollTop.current = scrollRef.current.scrollTop;
+    setSelected(event);
+  }, []);
+
+  const handleClose = useCallback(() => {
+    setSelected(null);
+    requestAnimationFrame(() => {
+      scrollRef.current?.scrollTo({ top: savedScrollTop.current });
+    });
   }, []);
 
   const selectedEra = selected
@@ -64,7 +77,7 @@ export default function TimelineExplorer({ timeline }: { timeline: TapsaTimeline
         timeline={timeline}
         eraColors={colors}
         selectedId={selected?.id ?? null}
-        onSelect={setSelected}
+        onSelect={handleSelect}
         onEraVisible={setActiveEraId}
         scrollRef={scrollRef}
       />
@@ -73,7 +86,7 @@ export default function TimelineExplorer({ timeline }: { timeline: TapsaTimeline
         Sourced from Wikipedia · No account, no ads
       </footer>
 
-      <TimelineEventDrawer event={selected} era={selectedEra} onClose={() => setSelected(null)} />
+      <TimelineEventDrawer event={selected} era={selectedEra} onClose={handleClose} />
     </div>
   );
 }
