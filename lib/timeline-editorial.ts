@@ -1,10 +1,10 @@
-import Anthropic from "@anthropic-ai/sdk";
 import { createHash } from "crypto";
+import OpenAI from "openai";
 import { z } from "zod";
 import type { TapsaTimeline, TimelineEra, TimelineEvent } from "./timeline-types";
 import { fetchWithRetry } from "./timeline-fetch";
 
-const DEFAULT_MODEL = "claude-sonnet-4-20250514";
+const DEFAULT_MODEL = "llama-3.3-70b-versatile";
 const MAX_OUTPUT_TOKENS_ORIENTATION = 120;
 const MAX_OUTPUT_TOKENS_ERA = 1800;
 
@@ -30,14 +30,18 @@ const EraBatchSchema = z.object({
   ),
 });
 
-function editorialModel(): string {
-  return process.env.TAPSA_TIMELINE_EDITORIAL_MODEL ?? DEFAULT_MODEL;
+function editorialConfig() {
+  return {
+    baseURL: process.env.TAPSA_LLM_BASE_URL ?? "https://api.groq.com/openai/v1",
+    apiKey: process.env.GROQ_API_KEY ?? process.env.TAPSA_LLM_API_KEY ?? "",
+    model: process.env.TAPSA_TIMELINE_EDITORIAL_MODEL ?? DEFAULT_MODEL,
+  };
 }
 
-function anthropicClient(): Anthropic | null {
-  const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
+function editorialClient(): OpenAI | null {
+  const { apiKey, baseURL } = editorialConfig();
   if (!apiKey) return null;
-  return new Anthropic({ apiKey, fetch: fetchWithRetry as typeof fetch });
+  return new OpenAI({ apiKey, baseURL, fetch: fetchWithRetry as typeof fetch });
 }
 
 function extractJson(text: string): unknown {
@@ -48,20 +52,23 @@ function extractJson(text: string): unknown {
 }
 
 async function callEditorial(system: string, user: string, maxTokens: number): Promise<unknown | null> {
-  const client = anthropicClient();
+  const client = editorialClient();
   if (!client) return null;
 
   try {
-    const response = await client.messages.create({
-      model: editorialModel(),
+    const response = await client.chat.completions.create({
+      model: editorialConfig().model,
       max_tokens: maxTokens,
       temperature: 0.2,
-      system,
-      messages: [{ role: "user", content: user }],
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
     });
-    const block = response.content.find((b) => b.type === "text");
-    if (!block || block.type !== "text") return null;
-    return extractJson(block.text);
+    const text = response.choices[0]?.message?.content ?? "";
+    if (!text) return null;
+    return extractJson(text);
   } catch {
     return null;
   }
@@ -164,7 +171,7 @@ export async function applyTimelineEditorial(
   timeline: TapsaTimeline,
   leadExtract: string,
 ): Promise<TapsaTimeline> {
-  if (!anthropicClient()) return timeline;
+  if (!editorialClient()) return timeline;
 
   const orientation = await editOrientation(timeline.title, leadExtract);
   const eraBatches = chunkEras(timeline.eras, timeline.events, 3);
