@@ -1,6 +1,5 @@
 import type { ChronologicalSource, ResolvedChronology } from "./timeline-sources";
 import type {
-  EventCategory,
   EventTier,
   TimelineEra,
   TimelineEvent,
@@ -74,18 +73,6 @@ function titleFromBody(body: string, maxWords = 8): string {
   const first = cleaned.split(/[.;]/)[0]?.trim() ?? cleaned;
   const words = first.split(/\s+/).slice(0, maxWords);
   return words.join(" ") || cleaned.slice(0, 60);
-}
-
-function inferCategory(text: string): EventCategory {
-  const t = text.toLowerCase();
-  if (/\b(theorem|equation|proof|mathematic)\b/.test(t)) return "MATHEMATICS";
-  if (/\b(planet|star|galaxy|comet|orbit|telescope)\b/.test(t)) return "ASTRONOMY";
-  if (/\b(physic|force|energy|quantum|particle)\b/.test(t)) return "PHYSICS";
-  if (/\b(experiment|discovery|hypothesis|theory|research)\b/.test(t)) return "SCIENCE";
-  if (/\b(invent|engineer|device|machine|software|computer)\b/.test(t)) return "TECHNOLOGY";
-  if (/\b(philosoph|ethic|logic)\b/.test(t)) return "PHILOSOPHY";
-  if (/\b(observe|survey|measure|record)\b/.test(t)) return "OBSERVATION";
-  return "CULTURE";
 }
 
 const SEMICOLON_LINE =
@@ -383,7 +370,6 @@ function toTimelineEvents(
       title,
       oneLiner: ev.oneLiner,
       body: ev.body,
-      category: inferCategory(ev.body),
       eraId: era.id,
       tier,
       transitionalText,

@@ -51,7 +51,7 @@ export default function LandmarkCard({
           className="text-[11px] font-semibold uppercase tracking-[0.14em]"
           style={{ color: accentColor }}
         >
-          {event.yearDisplay} · {event.category}
+          {event.category ? `${event.yearDisplay} · ${event.category}` : event.yearDisplay}
         </p>
         <h3 className="font-timeline-serif mt-1 text-lg font-medium leading-snug text-ink sm:text-xl">
           {event.title}

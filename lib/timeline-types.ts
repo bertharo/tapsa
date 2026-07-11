@@ -4,14 +4,12 @@ export const MIN_TIMELINE_EVENTS = 5;
 export const SPARSE_EVENT_THRESHOLD = 5;
 
 export const EVENT_CATEGORIES = [
+  "MILITARY",
+  "POLITICS",
   "SCIENCE",
-  "MATHEMATICS",
-  "PHYSICS",
-  "ASTRONOMY",
-  "OBSERVATION",
-  "PHILOSOPHY",
   "CULTURE",
-  "TECHNOLOGY",
+  "ECONOMY",
+  "SOCIETY",
 ] as const;
 
 export type EventCategory = (typeof EVENT_CATEGORIES)[number];
@@ -41,7 +39,7 @@ export type TimelineEvent = {
   title: string;
   oneLiner: string;
   body: string;
-  category: EventCategory;
+  category?: EventCategory;
   eraId: string;
   tier: EventTier;
   transitionalText?: string;
