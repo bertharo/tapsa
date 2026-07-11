@@ -1,102 +1,75 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import type { TapsaTimeline, TimelineEvent } from "@/lib/timeline-types";
 import { eraColorMap } from "@/lib/timeline-era-palette";
-import VerticalTimeline from "./VerticalTimeline";
+import HistorianTimeline from "./HistorianTimeline";
+import EraStrip from "./EraStrip";
 import TimelineEventDrawer from "./TimelineEventDrawer";
 import { TimelineSearchField } from "./TimelineSearch";
 
 export default function TimelineExplorer({ timeline }: { timeline: TapsaTimeline }) {
   const [selected, setSelected] = useState<TimelineEvent | null>(null);
-  const [activeEras, setActiveEras] = useState<Set<string>>(
-    () => new Set(timeline.eras.map((e) => e.id)),
-  );
+  const [activeEraId, setActiveEraId] = useState<string | null>(timeline.eras[0]?.id ?? null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const colors = useMemo(() => eraColorMap(timeline.eras), [timeline.eras]);
 
-  const toggleEra = (eraId: string) => {
-    setActiveEras((prev) => {
-      const next = new Set(prev);
-      if (next.has(eraId)) {
-        if (next.size <= 1) return prev;
-        next.delete(eraId);
-      } else {
-        next.add(eraId);
-      }
-      return next;
-    });
-  };
+  const scrollToEra = useCallback((eraId: string) => {
+    setActiveEraId(eraId);
+    const root = scrollRef.current;
+    const el = document.getElementById(`era-${eraId}`);
+    if (!root || !el) return;
+    const top = el.getBoundingClientRect().top - root.getBoundingClientRect().top + root.scrollTop - 12;
+    root.scrollTo({ top, behavior: "smooth" });
+  }, []);
 
   const selectedEra = selected
     ? timeline.eras.find((e) => e.id === selected.eraId)
     : undefined;
 
   return (
-    <div className="flex min-h-[100dvh] flex-col bg-paper">
-      <header className="sticky top-0 z-20 shrink-0 border-b border-ink/5 bg-paper/95 px-4 py-4 backdrop-blur-sm md:px-6">
-        <div className="mx-auto max-w-6xl">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <Link
-                href="/"
-                className="text-[11px] font-semibold uppercase tracking-[0.2em] text-accent"
-              >
-                Tapsa Timelines
-              </Link>
-              <h1 className="font-timeline-serif mt-1 text-2xl font-medium text-ink md:text-3xl">
-                {timeline.title}
-              </h1>
-            </div>
-            <div className="flex shrink-0 items-center gap-2">
-              <Link
-                href="/explore"
-                className="hidden rounded-full border border-ink/10 px-3 py-1.5 text-sm text-ink-soft transition hover:border-accent/40 sm:inline"
-              >
-                Map
-              </Link>
-              <div className="w-36 md:w-48">
-                <TimelineSearchField autoFocus={false} compact />
-              </div>
+    <div className="night-sky flex h-[100dvh] flex-col overflow-hidden">
+      <header className="sticky top-0 z-30 shrink-0 border-b border-white/10 bg-[#0b1026]/90 px-4 py-3 backdrop-blur-md md:px-6">
+        <div className="mx-auto flex max-w-6xl items-center justify-between gap-3">
+          <Link
+            href="/"
+            className="font-timeline-serif text-sm font-medium text-white/80 transition hover:text-[#c9a24b]"
+          >
+            ← Timelines
+          </Link>
+          <div className="flex items-center gap-2">
+            <Link
+              href="/explore"
+              className="hidden rounded-full border border-white/15 px-3 py-1 text-xs text-white/60 transition hover:border-[#c9a24b]/40 hover:text-white sm:inline"
+            >
+              Map
+            </Link>
+            <div className="w-36 md:w-44">
+              <TimelineSearchField autoFocus={false} compact />
             </div>
           </div>
-
-          <div className="mt-3 flex flex-wrap gap-2">
-            {timeline.eras.map((era) => {
-              const color = colors.get(era.id) ?? "#c9a24b";
-              const on = activeEras.has(era.id);
-              return (
-                <button
-                  key={era.id}
-                  type="button"
-                  onClick={() => toggleEra(era.id)}
-                  className="rounded-full border px-3 py-1 text-xs font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-                  style={{
-                    borderColor: on ? color : `${color}44`,
-                    backgroundColor: on ? `${color}22` : "transparent",
-                    color: on ? color : "var(--ink-muted)",
-                  }}
-                >
-                  {era.name}
-                </button>
-              );
-            })}
-          </div>
+        </div>
+        <div className="mx-auto mt-2 max-w-6xl">
+          <EraStrip
+            eras={timeline.eras}
+            eraColors={colors}
+            activeEraId={activeEraId}
+            onEraClick={scrollToEra}
+          />
         </div>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <VerticalTimeline
-          events={timeline.events}
-          eras={timeline.eras}
-          eraColors={colors}
-          activeEras={activeEras}
-          selectedId={selected?.id ?? null}
-          onSelect={setSelected}
-        />
-      </div>
+      <HistorianTimeline
+        timeline={timeline}
+        eraColors={colors}
+        selectedId={selected?.id ?? null}
+        onSelect={setSelected}
+        onEraVisible={setActiveEraId}
+        scrollRef={scrollRef}
+      />
 
-      <footer className="shrink-0 border-t border-ink/5 py-2 text-center text-[11px] text-ink-faint">
+      <footer className="shrink-0 border-t border-white/10 py-2 text-center text-[11px] text-white/35">
         Sourced from Wikipedia · No account, no ads
       </footer>
 

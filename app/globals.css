@@ -140,10 +140,16 @@ body {
   .night-stars-1,
   .night-stars-2,
   .night-comet,
-  .category-glyph-animate {
+  .category-glyph-animate,
+  .event-card {
     animation: none !important;
+    transition: none !important;
   }
   .night-comet {
     display: none;
   }
+}
+
+.historian-scroll {
+  -webkit-overflow-scrolling: touch;
 }
