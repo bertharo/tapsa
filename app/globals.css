@@ -102,6 +102,27 @@ body {
   100% { opacity: 0.85; }
 }
 
+.timeline-shimmer > div {
+  position: relative;
+  overflow: hidden;
+}
+.timeline-shimmer > div::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.06) 50%,
+    transparent 100%
+  );
+  animation: timeline-shimmer 1.8s ease-in-out infinite;
+}
+@keyframes timeline-shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
 .night-comet {
   top: 18%;
   left: -120px;

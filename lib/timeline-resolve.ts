@@ -1,5 +1,6 @@
 import { titleToSlug } from "./slug";
 import { TopicNotFoundError } from "./timeline-errors";
+import { timelineFetch } from "./timeline-fetch";
 
 const WIKI_REST = "https://en.wikipedia.org/api/rest_v1";
 const WIKI_ACTION = "https://en.wikipedia.org/w/api.php";
@@ -36,7 +37,7 @@ function countWords(text: string): number {
 
 async function restSummaryByTitle(titleQuery: string): Promise<WikiSummary | null> {
   const encoded = encodeURIComponent(titleQuery.replace(/\s+/g, "_"));
-  const res = await fetch(`${WIKI_REST}/page/summary/${encoded}?redirect=true`, {
+  const res = await timelineFetch(`${WIKI_REST}/page/summary/${encoded}?redirect=true`, {
     headers: HEADERS,
     next: { revalidate: 60 * 60 * 24 },
   });
@@ -59,7 +60,7 @@ async function searchTitles(query: string, limit = 8): Promise<string[]> {
     origin: "*",
   });
   try {
-    const res = await fetch(`${WIKI_ACTION}?${params.toString()}`, {
+    const res = await timelineFetch(`${WIKI_ACTION}?${params.toString()}`, {
       headers: HEADERS,
       next: { revalidate: 60 * 60 },
     });
@@ -150,7 +151,7 @@ export async function fetchRevisionId(title: string): Promise<number> {
     redirects: "1",
     origin: "*",
   });
-  const res = await fetch(`${WIKI_ACTION}?${params.toString()}`, {
+  const res = await timelineFetch(`${WIKI_ACTION}?${params.toString()}`, {
     headers: HEADERS,
     next: { revalidate: 60 * 60 },
   });
@@ -173,7 +174,7 @@ export async function fetchArticlePlainText(title: string, maxChars = 16000): Pr
     origin: "*",
   });
   try {
-    const res = await fetch(`${WIKI_ACTION}?${params.toString()}`, {
+    const res = await timelineFetch(`${WIKI_ACTION}?${params.toString()}`, {
       headers: HEADERS,
       next: { revalidate: 60 * 60 * 24 },
     });

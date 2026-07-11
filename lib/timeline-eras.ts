@@ -255,3 +255,30 @@ export function findEraForSortKey(eras: TimelineEra[], sortKey: number): Timelin
     return dist < bestDist ? e : best;
   });
 }
+
+/** Fast preliminary eras from section headings — used before events are extracted. */
+export function deriveShellEras(sections: SectionBlock[], topicType: TopicType): TimelineEra[] {
+  const dated: { name: string; key: number; intro: string }[] = [];
+  for (const sec of sections) {
+    const key = headingSortKey(sec.name, sec.text);
+    if (key === null) continue;
+    dated.push({ name: cleanHeading(sec.name), key, intro: sec.intro });
+  }
+  dated.sort((a, b) => a.key - b.key);
+
+  if (dated.length >= 2) {
+    return dated.slice(0, 8).map((d, i) => ({
+      id: `era-${i + 1}`,
+      name: d.name,
+      start: d.key,
+      end: d.key,
+      summary: d.intro || undefined,
+    }));
+  }
+
+  return [
+    { id: "era-1", name: fallbackName(0, 3, topicType), start: 0, end: 0 },
+    { id: "era-2", name: fallbackName(1, 3, topicType), start: 0, end: 0 },
+    { id: "era-3", name: fallbackName(2, 3, topicType), start: 0, end: 0 },
+  ];
+}

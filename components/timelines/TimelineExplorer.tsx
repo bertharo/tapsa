@@ -9,7 +9,17 @@ import EraStrip from "./EraStrip";
 import TimelineEventDrawer from "./TimelineEventDrawer";
 import { TimelineSearchField } from "./TimelineSearch";
 
-export default function TimelineExplorer({ timeline }: { timeline: TapsaTimeline }) {
+export default function TimelineExplorer({
+  timeline,
+  loadingEras,
+  eventsLoadError,
+  onRetryEvents,
+}: {
+  timeline: TapsaTimeline;
+  loadingEras?: Set<string>;
+  eventsLoadError?: string | null;
+  onRetryEvents?: () => void;
+}) {
   const [selected, setSelected] = useState<TimelineEvent | null>(null);
   const [activeEraId, setActiveEraId] = useState<string | null>(timeline.eras[0]?.id ?? null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -80,6 +90,9 @@ export default function TimelineExplorer({ timeline }: { timeline: TapsaTimeline
         onSelect={handleSelect}
         onEraVisible={setActiveEraId}
         scrollRef={scrollRef}
+        loadingEras={loadingEras}
+        eventsLoadError={eventsLoadError}
+        onRetryEvents={onRetryEvents}
       />
 
       <footer className="shrink-0 border-t border-white/10 py-2 text-center text-[11px] text-white/35">

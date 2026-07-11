@@ -14,6 +14,9 @@ type Props = {
   onSelect: (event: TimelineEvent) => void;
   onEraVisible?: (eraId: string) => void;
   scrollRef?: React.RefObject<HTMLDivElement | null>;
+  loadingEras?: Set<string>;
+  eventsLoadError?: string | null;
+  onRetryEvents?: () => void;
 };
 
 function useReducedMotion(): boolean {
@@ -110,6 +113,9 @@ export default function HistorianTimeline({
   onSelect,
   onEraVisible,
   scrollRef: externalScrollRef,
+  loadingEras,
+  eventsLoadError,
+  onRetryEvents,
 }: Props) {
   const internalScrollRef = useRef<HTMLDivElement>(null);
   const scrollRef = externalScrollRef ?? internalScrollRef;
@@ -136,6 +142,9 @@ export default function HistorianTimeline({
         lastEraId = ev.eraId;
       }
       groups[groups.length - 1]?.events.push(ev);
+    }
+    if (!groups.length && eras.length) {
+      for (const era of eras) groups.push({ era, events: [] });
     }
     return groups;
   }, [sorted, eraById, eras]);
@@ -209,26 +218,60 @@ export default function HistorianTimeline({
 
           {grouped.map(({ era, events: eraEvents }) => {
             const color = eraColors.get(era.id) ?? "#c9a24b";
+            const eraLoading = loadingEras?.has(era.id) && eraEvents.length === 0;
             return (
               <section key={era.id} className="relative">
                 <EraChapter era={era} accentColor={color} id={`era-${era.id}`} />
-                <ol className="space-y-6">
-                  {eraEvents.map((ev) => (
-                    <EventRow
-                      key={ev.id}
-                      event={ev}
-                      accentColor={color}
-                      selected={selectedId === ev.id}
-                      onSelect={() => onSelect(ev)}
-                      reducedMotion={reducedMotion}
-                    />
-                  ))}
-                </ol>
+                {eraLoading ? (
+                  <EraEventSkeletons count={era.id === eras[0]?.id ? 3 : 2} />
+                ) : (
+                  <ol className="space-y-6">
+                    {eraEvents.map((ev) => (
+                      <EventRow
+                        key={ev.id}
+                        event={ev}
+                        accentColor={color}
+                        selected={selectedId === ev.id}
+                        onSelect={() => onSelect(ev)}
+                        reducedMotion={reducedMotion}
+                      />
+                    ))}
+                  </ol>
+                )}
               </section>
             );
           })}
+
+          {eventsLoadError && (
+            <div className="mt-8 rounded-xl border border-white/15 bg-white/5 p-4 text-center">
+              <p className="text-sm text-white/60">{eventsLoadError}</p>
+              {onRetryEvents && (
+                <button
+                  type="button"
+                  onClick={onRetryEvents}
+                  className="mt-3 rounded-full border border-white/20 px-4 py-1.5 text-sm text-white/80 transition hover:border-[#c9a24b]/50 hover:text-white"
+                >
+                  Retry
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </div>
+    </div>
+  );
+}
+
+export function EraEventSkeletons({ count = 2 }: { count?: number }) {
+  return (
+    <div className="space-y-6">
+      {Array.from({ length: count }).map((_, i) => (
+        <div key={i} className="timeline-shimmer pl-10 md:pl-12">
+          <div className="h-36 rounded-2xl bg-white/10" />
+          <div className="mt-3 h-4 w-2/3 rounded bg-white/10" />
+          <div className="mt-2 h-3 w-full rounded bg-white/5" />
+        </div>
+      ))}
     </div>
   );
 }
@@ -238,7 +281,7 @@ export function HistorianTimelineSkeleton({ count = 8 }: { count?: number }) {
     <div className="relative mx-auto max-w-2xl space-y-6 px-4 py-8 md:px-6">
       <div className="pointer-events-none absolute bottom-0 left-6 top-0 w-px bg-white/10" />
       {Array.from({ length: count }).map((_, i) => (
-        <div key={i} className="animate-pulse pl-10">
+        <div key={i} className="timeline-shimmer animate-pulse pl-10">
           <div className="h-40 rounded-2xl bg-white/10" />
           <div className="mt-3 h-4 w-3/4 rounded bg-white/10" />
           <div className="mt-2 h-3 w-full rounded bg-white/5" />

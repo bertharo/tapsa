@@ -1,5 +1,6 @@
 import { fetchArticlePlainText, fetchSections, fetchSectionContent } from "./wikipedia";
 import { extractSectionIntro } from "./timeline-eras";
+import { timelineFetch } from "./timeline-fetch";
 import { restSummaryByTitle } from "./timeline-wiki";
 import { titleToSlug } from "./slug";
 
@@ -62,7 +63,7 @@ async function fetchRevisionId(title: string): Promise<number> {
     redirects: "1",
     origin: "*",
   });
-  const res = await fetch(`${WIKI_ACTION}?${params.toString()}`, {
+  const res = await timelineFetch(`${WIKI_ACTION}?${params.toString()}`, {
     headers: HEADERS,
     next: { revalidate: 60 * 60 },
   });
@@ -179,6 +180,37 @@ export async function resolveChronologicalSources(
     lead: summary?.extract?.trim() ?? "",
     sources,
     mergedText,
+    eraSections,
+  };
+}
+
+/** Lightweight chronology for progressive shell render — summary + section headings only. */
+export async function resolveChronologyShell(mainTitle: string): Promise<{
+  mainTitle: string;
+  revisionId: number;
+  sourceUrl: string;
+  lead: string;
+  eraSections: ChronologicalSection[];
+}> {
+  const summary = await restSummaryByTitle(mainTitle);
+  const sourceUrl =
+    summary?.content_urls?.desktop?.page ??
+    `https://en.wikipedia.org/wiki/${encodeURIComponent(mainTitle.replace(/\s+/g, "_"))}`;
+
+  const wikiSections = await fetchSections(mainTitle);
+  const eraSections: ChronologicalSection[] = wikiSections.slice(0, 12).map((sec) => ({
+    name: sec.line,
+    index: sec.index,
+    text: "",
+    intro: "",
+    links: [],
+  }));
+
+  return {
+    mainTitle,
+    revisionId: await fetchRevisionId(mainTitle),
+    sourceUrl,
+    lead: summary?.extract?.trim() ?? "",
     eraSections,
   };
 }

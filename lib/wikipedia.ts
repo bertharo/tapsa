@@ -1,6 +1,7 @@
 import type { CandidateLink, Domain, Grounding } from "./types";
 import { slugToTitleQuery, titleToSlug } from "./slug";
 import { TopicNotFoundError } from "./timeline-errors";
+import { timelineFetch } from "./timeline-fetch";
 
 export { TopicNotFoundError };
 
@@ -472,7 +473,7 @@ export async function fetchArticlePlainText(title: string, maxChars = 16000): Pr
     origin: "*",
   });
   try {
-    const res = await fetch(`${WIKI_ACTION}?${params.toString()}`, {
+    const res = await timelineFetch(`${WIKI_ACTION}?${params.toString()}`, {
       headers: HEADERS,
       next: { revalidate: 60 * 60 * 24 },
     });
@@ -546,7 +547,7 @@ export async function fetchSections(title: string): Promise<WikiSection[]> {
     redirects: "1",
     origin: "*",
   });
-  const res = await fetch(`${WIKI_ACTION}?${params.toString()}`, {
+  const res = await timelineFetch(`${WIKI_ACTION}?${params.toString()}`, {
     headers: HEADERS,
     next: { revalidate: 60 * 60 * 24 },
   });
@@ -594,7 +595,7 @@ export async function fetchSectionContent(
     disabletoc: "1",
     origin: "*",
   });
-  const res = await fetch(`${WIKI_ACTION}?${params.toString()}`, {
+  const res = await timelineFetch(`${WIKI_ACTION}?${params.toString()}`, {
     headers: HEADERS,
     next: { revalidate: 60 * 60 * 24 },
   });

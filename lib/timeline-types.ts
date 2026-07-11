@@ -64,6 +64,20 @@ export type TimelineEra = {
 
 export type AdjacentTopic = { title: string; slug: string };
 
+export type TimelineShell = {
+  slug: string;
+  title: string;
+  topic: string;
+  wikiTitle: string;
+  revisionId: number;
+  sourceUrl: string;
+  orientation: string;
+  eras: TimelineEra[];
+  topicType: TopicType;
+  sparse: boolean;
+  schemaVersion: number;
+};
+
 export type TapsaTimeline = {
   slug: string;
   title: string;

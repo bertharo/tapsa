@@ -1,4 +1,5 @@
 import type { TimelineImageMeta } from "./timeline-types";
+import { timelineFetch } from "./timeline-fetch";
 
 const WIKI_ACTION = "https://en.wikipedia.org/w/api.php";
 const UA =
@@ -31,7 +32,7 @@ async function fetchPageImageInfo(title: string): Promise<ImageInfo | null> {
     redirects: "1",
     origin: "*",
   });
-  const res = await fetch(`${WIKI_ACTION}?${params.toString()}`, {
+  const res = await timelineFetch(`${WIKI_ACTION}?${params.toString()}`, {
     headers: HEADERS,
     next: { revalidate: 60 * 60 * 24 },
   });
@@ -59,7 +60,7 @@ async function fetchPageImageInfo(title: string): Promise<ImageInfo | null> {
     iiurlwidth: "800",
     origin: "*",
   });
-  const infoRes = await fetch(`${WIKI_ACTION}?${infoParams.toString()}`, {
+  const infoRes = await timelineFetch(`${WIKI_ACTION}?${infoParams.toString()}`, {
     headers: HEADERS,
     next: { revalidate: 60 * 60 * 24 },
   });

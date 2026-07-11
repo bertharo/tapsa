@@ -5,17 +5,20 @@ import {
   TopicNotFoundError,
 } from "./timeline-errors";
 import { extractTimelineFromSources, isTimelineSufficient } from "./timeline-extract";
+import { deriveShellEras } from "./timeline-eras";
 import { fetchGatedWikiImage } from "./timeline-images-gate";
-import type { TapsaTimeline, TimelineEvent } from "./timeline-types";
+import type { TapsaTimeline, TimelineEvent, TimelineShell } from "./timeline-types";
 import { TIMELINE_SCHEMA_VERSION } from "./timeline-types";
 import { resolveArticleTitle, timelineCacheKey } from "./timeline-resolve";
-import { resolveChronologicalSources } from "./timeline-sources";
+import { resolveChronologicalSources, resolveChronologyShell } from "./timeline-sources";
 import { titleToSlug } from "./slug";
 
 export { TimelineTooThinError, TopicNotFoundError };
 export { TimelineUnavailableError } from "./timeline-errors";
 
 export type TimelineResult = { timeline: TapsaTimeline; cacheHit: boolean };
+
+export type TimelineShellResult = { shell: TimelineShell; cacheHit: boolean };
 
 const JUNK_EVENT = /^(chapter|section|part|unit|module)\s*[\d.:]*/i;
 
@@ -97,3 +100,61 @@ export const getOrCreateTimeline = cache(async (rawTopic: string): Promise<Timel
   await store.set({ ...timeline, cacheKey: revisionCacheKey });
   return { timeline, cacheHit: false };
 });
+
+/** Fast orientation + era strip for progressive client render. */
+export async function resolveTimelineShell(rawTopic: string): Promise<TimelineShellResult> {
+  const requestedSlug = titleToSlug(rawTopic);
+  if (!requestedSlug) throw new Error("Missing topic.");
+
+  const displayTitle = rawTopic.trim() || requestedSlug;
+  const mainTitle = await resolveArticleTitle(displayTitle);
+  const shellChronology = await resolveChronologyShell(mainTitle);
+  const revisionCacheKey = timelineCacheKey(mainTitle, shellChronology.revisionId);
+
+  const store = getTimelineStore();
+  const revisionCached = await store.get(revisionCacheKey);
+  if (revisionCached && isUsableCached(revisionCached)) {
+    return {
+      shell: {
+        slug: requestedSlug,
+        title: displayTitle,
+        topic: mainTitle,
+        wikiTitle: mainTitle,
+        revisionId: shellChronology.revisionId,
+        sourceUrl: revisionCached.sourceUrl,
+        orientation: revisionCached.orientation,
+        eras: revisionCached.eras,
+        topicType: revisionCached.topicType,
+        sparse: revisionCached.sparse,
+        schemaVersion: TIMELINE_SCHEMA_VERSION,
+      },
+      cacheHit: true,
+    };
+  }
+
+  const eras = deriveShellEras(
+    shellChronology.eraSections.map((s) => ({ name: s.name, text: s.name, intro: s.intro })),
+    "CONCEPT",
+  );
+
+  const orientation =
+    shellChronology.lead.split(/[.!?]/)[0]?.trim().slice(0, 220) ||
+    `The history of ${displayTitle}.`;
+
+  return {
+    shell: {
+      slug: requestedSlug,
+      title: displayTitle,
+      topic: mainTitle,
+      wikiTitle: mainTitle,
+      revisionId: shellChronology.revisionId,
+      sourceUrl: shellChronology.sourceUrl,
+      orientation,
+      eras,
+      topicType: "CONCEPT",
+      sparse: false,
+      schemaVersion: TIMELINE_SCHEMA_VERSION,
+    },
+    cacheHit: false,
+  };
+}

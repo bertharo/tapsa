@@ -1,5 +1,7 @@
 /** Shared Wikipedia REST helpers for timeline modules. */
 
+import { timelineFetch } from "./timeline-fetch";
+
 const WIKI_REST = "https://en.wikipedia.org/api/rest_v1";
 const UA =
   "Tapsa/0.1 (knowledge-graph explorer; https://tapsa.ai; contact@tapsa.ai) AppleWebKit/537.36";
@@ -14,7 +16,7 @@ type WikiSummary = {
 
 export async function restSummaryByTitle(titleQuery: string): Promise<WikiSummary | null> {
   const encoded = encodeURIComponent(titleQuery.replace(/\s+/g, "_"));
-  const res = await fetch(`${WIKI_REST}/page/summary/${encoded}?redirect=true`, {
+  const res = await timelineFetch(`${WIKI_REST}/page/summary/${encoded}?redirect=true`, {
     headers: HEADERS,
     next: { revalidate: 60 * 60 * 24 },
   });

@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import TimelineExplorer from "./TimelineExplorer";
 import TimelineSearch from "./TimelineSearch";
 import TimelineGeneratingShell from "./TimelineGeneratingShell";
-import type { TapsaTimeline } from "@/lib/timeline-types";
+import type { TapsaTimeline, TimelineShell } from "@/lib/timeline-types";
+import { TIMELINE_SCHEMA_VERSION } from "@/lib/timeline-types";
 import { slugToTitleQuery } from "@/lib/slug";
 
 function displayQuery(q: string): string {
@@ -15,14 +16,15 @@ function displayQuery(q: string): string {
 }
 
 function timelineCacheKey(slug: string, query: string): string {
-  return `tapsa:timeline:v4:${slug}:${query.trim().toLowerCase()}`;
+  return `tapsa:timeline:v${TIMELINE_SCHEMA_VERSION}:${slug}:${query.trim().toLowerCase()}`;
 }
 
-function readSessionTimeline(slug: string, query: string): TapsaTimeline | null {
+function readLocalTimeline(slug: string, query: string): TapsaTimeline | null {
   try {
-    const raw = sessionStorage.getItem(timelineCacheKey(slug, query));
+    const raw = localStorage.getItem(timelineCacheKey(slug, query));
     if (!raw) return null;
     const parsed = JSON.parse(raw) as TapsaTimeline;
+    if (parsed?.schemaVersion !== TIMELINE_SCHEMA_VERSION) return null;
     if (parsed?.events?.length && parsed.slug) return parsed;
   } catch {
     /* ignore */
@@ -30,12 +32,32 @@ function readSessionTimeline(slug: string, query: string): TapsaTimeline | null 
   return null;
 }
 
-function writeSessionTimeline(slug: string, query: string, timeline: TapsaTimeline) {
+function writeLocalTimeline(slug: string, query: string, timeline: TapsaTimeline) {
   try {
-    sessionStorage.setItem(timelineCacheKey(slug, query), JSON.stringify(timeline));
+    localStorage.setItem(timelineCacheKey(slug, query), JSON.stringify(timeline));
   } catch {
     /* quota */
   }
+}
+
+function shellToPartialTimeline(shell: TimelineShell): TapsaTimeline {
+  return {
+    slug: shell.slug,
+    title: shell.title,
+    topic: shell.topic,
+    wikiTitle: shell.wikiTitle,
+    revisionId: shell.revisionId,
+    sourceUrl: shell.sourceUrl,
+    orientation: shell.orientation,
+    eras: shell.eras,
+    topicType: shell.topicType,
+    sparse: shell.sparse,
+    schemaVersion: shell.schemaVersion,
+    events: [],
+    generatedAt: new Date().toISOString(),
+    cacheKey: "",
+    origin: "wikipedia",
+  };
 }
 
 function TimelineErrorShell({ title, body }: { title: string; body: string }) {
@@ -57,12 +79,13 @@ type DisambiguationOption = { title: string; slug: string };
 
 type LoadState =
   | { status: "loading" }
+  | { status: "partial"; timeline: TapsaTimeline; loadingEras: Set<string> }
   | { status: "ready"; timeline: TapsaTimeline }
   | { status: "disambiguation"; options: DisambiguationOption[]; query: string }
   | { status: "not_found" }
   | { status: "too_thin" }
   | { status: "unavailable"; reason?: string }
-  | { status: "error" };
+  | { status: "error"; partial?: TapsaTimeline };
 
 function DisambiguationPicker({
   query,
@@ -113,27 +136,88 @@ export default function TimelineSlugClient({ slug }: { slug: string }) {
   const query = searchParams.get("q")?.trim() || slugToTitleQuery(slug);
   const [state, setState] = useState<LoadState>(() => {
     if (typeof window === "undefined") return { status: "loading" };
-    const cached = readSessionTimeline(slug, query);
+    const cached = readLocalTimeline(slug, query);
     return cached ? { status: "ready", timeline: cached } : { status: "loading" };
   });
+  const [eventsLoadError, setEventsLoadError] = useState<string | null>(null);
+  const [retryKey, setRetryKey] = useState(0);
   const displayTitle = displayQuery(query);
+
+  const loadFullTimeline = useCallback(async () => {
+    const apiUrl = `/api/timeline/${encodeURIComponent(slug)}?q=${encodeURIComponent(query)}`;
+    const res = await fetch(apiUrl, { cache: "no-store" });
+    const data = (await res.json()) as {
+      timeline?: TapsaTimeline;
+      disambiguation?: boolean;
+      options?: DisambiguationOption[];
+      error?: string;
+      reason?: string;
+    };
+    return { res, data };
+  }, [slug, query]);
 
   useEffect(() => {
     let cancelled = false;
-    const cached = readSessionTimeline(slug, query);
-    if (!cached) setState({ status: "loading" });
+    const cached = readLocalTimeline(slug, query);
+
+    if (cached) {
+      setState({ status: "ready", timeline: cached });
+      setEventsLoadError(null);
+      (async () => {
+        try {
+          const { res, data } = await loadFullTimeline();
+          if (cancelled) return;
+          if (res.ok && data.timeline) {
+            writeLocalTimeline(slug, query, data.timeline);
+            setState({ status: "ready", timeline: data.timeline });
+          }
+        } catch {
+          /* keep cached view */
+        }
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setState({ status: "loading" });
+    setEventsLoadError(null);
 
     (async () => {
       try {
-        const apiUrl = `/api/timeline/${encodeURIComponent(slug)}?q=${encodeURIComponent(query)}`;
-        const res = await fetch(apiUrl, { cache: "no-store" });
-        const data = (await res.json()) as {
-          timeline?: TapsaTimeline;
+        const shellUrl = `/api/timeline/${encodeURIComponent(slug)}/shell?q=${encodeURIComponent(query)}`;
+        const shellRes = await fetch(shellUrl, { cache: "no-store" });
+        const shellData = (await shellRes.json()) as {
+          shell?: TimelineShell;
           disambiguation?: boolean;
           options?: DisambiguationOption[];
           error?: string;
-          reason?: string;
         };
+        if (cancelled) return;
+
+        if (shellData.disambiguation && shellData.options?.length) {
+          setState({ status: "disambiguation", options: shellData.options, query });
+          return;
+        }
+        if (shellData.error === "not_found") {
+          setState({ status: "not_found" });
+          return;
+        }
+        if (shellData.error === "too_thin") {
+          setState({ status: "too_thin" });
+          return;
+        }
+
+        if (shellRes.ok && shellData.shell) {
+          const loadingEras = new Set(shellData.shell.eras.map((e) => e.id));
+          setState({
+            status: "partial",
+            timeline: shellToPartialTimeline(shellData.shell),
+            loadingEras,
+          });
+        }
+
+        const { res, data } = await loadFullTimeline();
         if (cancelled) return;
 
         if (data.disambiguation && data.options?.length) {
@@ -141,30 +225,65 @@ export default function TimelineSlugClient({ slug }: { slug: string }) {
           return;
         }
         if (res.ok && data.timeline) {
-          writeSessionTimeline(slug, query, data.timeline);
+          writeLocalTimeline(slug, query, data.timeline);
           setState({ status: "ready", timeline: data.timeline });
+          setEventsLoadError(null);
           return;
         }
         if (data.error === "not_found") setState({ status: "not_found" });
         else if (data.error === "too_thin") setState({ status: "too_thin" });
         else if (data.error === "unavailable") {
           setState({ status: "unavailable", reason: data.reason });
-        } else setState({ status: "error" });
+        } else if (shellRes.ok && shellData.shell) {
+          setEventsLoadError("Couldn't load events for this timeline.");
+          setState((prev) =>
+            prev.status === "partial"
+              ? prev
+              : { status: "error", partial: shellToPartialTimeline(shellData.shell!) },
+          );
+        } else {
+          setState({ status: "error" });
+        }
       } catch {
-        if (!cancelled) setState({ status: "error" });
+        if (!cancelled) {
+          setEventsLoadError("Couldn't load events for this timeline.");
+          setState((prev) => (prev.status === "partial" ? prev : { status: "error" }));
+        }
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [slug, query]);
+  }, [slug, query, loadFullTimeline, retryKey]);
+
+  const handleRetryEvents = useCallback(() => {
+    setEventsLoadError(null);
+    setRetryKey((k) => k + 1);
+  }, []);
 
   if (state.status === "loading") {
     return <TimelineGeneratingShell title={displayTitle} />;
   }
-  if (state.status === "ready") {
-    return <TimelineExplorer timeline={state.timeline} />;
+  if (state.status === "partial" || state.status === "ready") {
+    return (
+      <TimelineExplorer
+        timeline={state.timeline}
+        loadingEras={state.status === "partial" ? state.loadingEras : undefined}
+        eventsLoadError={eventsLoadError}
+        onRetryEvents={eventsLoadError ? handleRetryEvents : undefined}
+      />
+    );
+  }
+  if (state.status === "error" && state.partial) {
+    return (
+      <TimelineExplorer
+        timeline={state.partial}
+        loadingEras={new Set(state.partial.eras.map((e) => e.id))}
+        eventsLoadError={eventsLoadError ?? "Couldn't load events for this timeline."}
+        onRetryEvents={handleRetryEvents}
+      />
+    );
   }
   if (state.status === "disambiguation") {
     return <DisambiguationPicker query={state.query} options={state.options} />;
