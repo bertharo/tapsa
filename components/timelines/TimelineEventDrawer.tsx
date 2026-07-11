@@ -5,12 +5,18 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { Connection, TapsaNode } from "@/lib/types";
 import type { TimelineEvent, TimelineEra } from "@/lib/timeline-types";
-import { titleToSlug } from "@/lib/slug";
 import { TIMELINE_TERRACOTTA } from "@/lib/timeline-era-palette";
+import { useTimelineNavigate } from "@/hooks/useTimelineNavigate";
+import TimelineNavigatingOverlay from "./TimelineNavigatingOverlay";
 
-function goTimeline(title: string) {
-  const slug = titleToSlug(title);
-  window.location.assign(`/timeline/${encodeURIComponent(slug)}?q=${encodeURIComponent(title)}`);
+function ConnectionSkeleton() {
+  return (
+    <div className="space-y-3 rounded-2xl border border-ink/10 bg-white p-4 shadow-node">
+      <div className="h-4 w-3/4 animate-pulse rounded bg-ink/10" />
+      <div className="h-3 w-1/2 animate-pulse rounded bg-ink/5" />
+      <div className="h-3 w-full animate-pulse rounded bg-ink/5" />
+    </div>
+  );
 }
 
 export default function TimelineEventDrawer({
@@ -22,6 +28,7 @@ export default function TimelineEventDrawer({
   era?: TimelineEra;
   onClose: () => void;
 }) {
+  const { go, navigating } = useTimelineNavigate();
   const [node, setNode] = useState<TapsaNode | null>(null);
   const [nodeLoading, setNodeLoading] = useState(false);
 
@@ -69,6 +76,7 @@ export default function TimelineEventDrawer({
 
   return (
     <AnimatePresence>
+      {navigating && <TimelineNavigatingOverlay title={navigating} />}
       {event && (
         <>
           <motion.button
@@ -95,7 +103,8 @@ export default function TimelineEventDrawer({
                   className="text-xs font-medium uppercase tracking-[0.14em]"
                   style={{ color: TIMELINE_TERRACOTTA }}
                 >
-                  {event.yearDisplay} · {event.category}
+                  {event.yearDisplay}
+                  {event.category ? ` · ${event.category}` : ""}
                 </p>
                 <h2 className="font-timeline-serif mt-1 text-2xl font-medium leading-tight text-ink">
                   {event.title}
@@ -125,7 +134,16 @@ export default function TimelineEventDrawer({
               )}
 
               {nodeLoading && (
-                <p className="mt-6 text-sm text-ink-faint">Loading connections…</p>
+                <div className="mt-8">
+                  <h3 className="mb-3 text-xs font-semibold uppercase tracking-[0.14em] text-ink-muted">
+                    Go deeper
+                  </h3>
+                  <p className="mb-3 text-sm text-ink-faint">Finding related topics…</p>
+                  <div className="grid gap-2.5">
+                    <ConnectionSkeleton />
+                    <ConnectionSkeleton />
+                  </div>
+                </div>
               )}
 
               {connections.length > 0 && (
@@ -166,7 +184,7 @@ export default function TimelineEventDrawer({
                           </Link>
                           <button
                             type="button"
-                            onClick={() => goTimeline(c.title)}
+                            onClick={() => go(c.title)}
                             className="rounded-full border border-ink/10 px-3 py-1.5 text-xs font-medium text-ink-soft transition hover:border-accent/40 hover:text-ink"
                           >
                             View timeline →

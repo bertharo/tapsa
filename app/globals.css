@@ -123,6 +123,14 @@ body {
   100% { transform: translateX(100%); }
 }
 
+.timeline-nav-progress {
+  animation: timeline-nav-indeterminate 1.4s ease-in-out infinite;
+}
+@keyframes timeline-nav-indeterminate {
+  0% { transform: translateX(-120%); }
+  100% { transform: translateX(320%); }
+}
+
 .night-comet {
   top: 18%;
   left: -120px;
@@ -162,6 +170,7 @@ body {
   .night-stars-2,
   .night-comet,
   .category-glyph-animate,
+  .timeline-nav-progress,
   .event-card {
     animation: none !important;
     transition: none !important;

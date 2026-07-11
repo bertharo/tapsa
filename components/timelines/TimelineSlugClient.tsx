@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
+import { clearTimelineBuilding, markTimelineBuilding } from "@/lib/timeline-nav";
 import TimelineExplorer from "./TimelineExplorer";
 import TimelineSearch from "./TimelineSearch";
 import TimelineGeneratingShell from "./TimelineGeneratingShell";
@@ -113,11 +114,12 @@ function DisambiguationPicker({
           <button
             key={opt.slug}
             type="button"
-            onClick={() =>
+            onClick={() => {
+              markTimelineBuilding(opt.title);
               router.push(
                 `/timeline/${encodeURIComponent(opt.slug)}?q=${encodeURIComponent(opt.title)}`,
-              )
-            }
+              );
+            }}
             className="rounded-full border border-ink/10 bg-white px-4 py-2 text-sm text-ink-soft shadow-sm transition hover:border-accent/40 hover:text-ink"
           >
             {opt.title}
@@ -155,6 +157,12 @@ export default function TimelineSlugClient({ slug }: { slug: string }) {
     };
     return { res, data };
   }, [slug, query]);
+
+  useEffect(() => {
+    if (state.status !== "loading") {
+      clearTimelineBuilding();
+    }
+  }, [state.status]);
 
   useEffect(() => {
     let cancelled = false;

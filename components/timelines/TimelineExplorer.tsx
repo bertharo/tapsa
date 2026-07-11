@@ -81,6 +81,13 @@ export default function TimelineExplorer({
             onEraClick={scrollToEra}
           />
         </div>
+        {loadingEras && loadingEras.size > 0 && (
+          <div className="mx-auto mt-2 max-w-6xl" role="status" aria-live="polite">
+            <p className="rounded-lg border border-[#c9a24b]/25 bg-[#c9a24b]/10 px-3 py-1.5 text-center text-xs text-[#e8d5a3]">
+              Building out events — cards appear as we pull dates from Wikipedia.
+            </p>
+          </div>
+        )}
       </header>
 
       <HistorianTimeline

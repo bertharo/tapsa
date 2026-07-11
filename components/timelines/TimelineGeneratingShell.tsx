@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { HistorianTimelineSkeleton } from "./HistorianTimeline";
 import { TimelineSearchField } from "./TimelineSearch";
+import TimelineBuildingStatus from "./TimelineBuildingStatus";
 
 export default function TimelineGeneratingShell({ title }: { title: string }) {
   return (
@@ -19,9 +20,7 @@ export default function TimelineGeneratingShell({ title }: { title: string }) {
           <h1 className="font-timeline-serif mt-1 text-2xl font-medium text-white md:text-3xl">
             {title}
           </h1>
-          <p className="mt-2 text-sm text-white/50">
-            Building your timeline — first visit can take up to a minute.
-          </p>
+          <TimelineBuildingStatus title={title} className="mt-2" />
           <div className="mt-3 max-w-xs">
             <TimelineSearchField autoFocus={false} compact />
           </div>

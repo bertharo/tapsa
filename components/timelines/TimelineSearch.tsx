@@ -1,22 +1,13 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { titleToSlug } from "@/lib/slug";
+import { useTimelineNavigate } from "@/hooks/useTimelineNavigate";
+import TimelineNavigatingOverlay from "./TimelineNavigatingOverlay";
 
 const STARTERS = ["England", "Computers", "Accounting", "Basketball", "Coffee", "Silk Road"];
 
 type Suggestion = { slug: string; title: string };
-
-function goToTimeline(topic: string) {
-  const q = topic.trim();
-  if (!q) return;
-  const slug = titleToSlug(q);
-  if (!slug) return;
-  const url = `/timeline/${encodeURIComponent(slug)}?q=${encodeURIComponent(q)}`;
-  window.location.assign(url);
-}
 
 export function TimelineSearchField({
   autoFocus = true,
@@ -25,13 +16,15 @@ export function TimelineSearchField({
   autoFocus?: boolean;
   compact?: boolean;
 }) {
+  const { go, navigating } = useTimelineNavigate();
   const [value, setValue] = useState("");
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
-  const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const blurTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const loading = submitting || Boolean(navigating);
 
   useEffect(() => {
     const q = value.trim();
@@ -59,98 +52,123 @@ export function TimelineSearchField({
     return () => clearTimeout(handle);
   }, [value]);
 
+  function navigateTo(topic: string) {
+    setSubmitting(true);
+    setOpen(false);
+    go(topic);
+  }
+
   function submit() {
     const chosen = active >= 0 ? suggestions[active] : suggestions[0];
     if (chosen) {
-      setLoading(true);
-      setOpen(false);
-      goToTimeline(chosen.title);
+      setValue(chosen.title);
+      navigateTo(chosen.title);
       return;
     }
     if (value.trim()) {
-      setLoading(true);
-      goToTimeline(value);
+      navigateTo(value);
     }
   }
 
   return (
-    <div className="relative w-full">
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          submit();
-        }}
-        className="relative"
-      >
-        <input
-          autoFocus={autoFocus}
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          onFocus={() => suggestions.length && setOpen(true)}
-          onBlur={() => {
-            blurTimer.current = setTimeout(() => setOpen(false), 150);
+    <>
+      {navigating && <TimelineNavigatingOverlay title={navigating} />}
+      <div className="relative w-full">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            submit();
           }}
-          onKeyDown={(e) => {
-            if (!open || !suggestions.length) return;
-            if (e.key === "ArrowDown") {
-              e.preventDefault();
-              setActive((i) => Math.min(i + 1, suggestions.length - 1));
-            } else if (e.key === "ArrowUp") {
-              e.preventDefault();
-              setActive((i) => Math.max(i - 1, 0));
-            } else if (e.key === "Escape") {
-              setOpen(false);
-            }
-          }}
-          placeholder={compact ? "New topic…" : "What history do you want to travel?"}
-          aria-label="Search a topic for its timeline"
-          aria-autocomplete="list"
-          aria-expanded={open}
-          className={`w-full rounded-2xl border border-ink/10 bg-white text-ink shadow-node outline-none transition placeholder:text-ink-faint focus:border-accent/40 focus:shadow-glow ${
-            compact ? "py-2 pl-3 pr-20 text-sm" : "py-4 pl-5 pr-28 text-lg md:text-xl"
-          }`}
-        />
-        <button
-          type="submit"
-          disabled={loading || !value.trim()}
-          className={`absolute right-2 top-1/2 -translate-y-1/2 rounded-xl bg-ink font-medium text-paper transition hover:bg-ink-soft disabled:opacity-30 ${
-            compact ? "px-2.5 py-1 text-xs" : "px-4 py-2 text-sm"
-          }`}
+          className="relative"
         >
-          {loading ? "…" : compact ? "Go" : "Explore"}
-        </button>
-      </form>
-
-      <AnimatePresence>
-        {open && suggestions.length > 0 && (
-          <motion.ul
-            initial={{ opacity: 0, y: -4 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -4 }}
-            className="absolute left-0 right-0 top-full z-50 mt-2 overflow-hidden rounded-xl border border-ink/10 bg-white py-1 shadow-node"
-            onMouseDown={() => blurTimer.current && clearTimeout(blurTimer.current)}
+          <input
+            autoFocus={autoFocus}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onFocus={() => suggestions.length && setOpen(true)}
+            onBlur={() => {
+              blurTimer.current = setTimeout(() => setOpen(false), 150);
+            }}
+            onKeyDown={(e) => {
+              if (!open || !suggestions.length) return;
+              if (e.key === "ArrowDown") {
+                e.preventDefault();
+                setActive((i) => Math.min(i + 1, suggestions.length - 1));
+              } else if (e.key === "ArrowUp") {
+                e.preventDefault();
+                setActive((i) => Math.max(i - 1, 0));
+              } else if (e.key === "Escape") {
+                setOpen(false);
+              }
+            }}
+            placeholder={compact ? "New topic…" : "What history do you want to travel?"}
+            aria-label="Search a topic for its timeline"
+            aria-autocomplete="list"
+            aria-expanded={open}
+            className={`w-full rounded-2xl border border-ink/10 bg-white text-ink shadow-node outline-none transition placeholder:text-ink-faint focus:border-accent/40 focus:shadow-glow ${
+              compact ? "py-2 pl-3 pr-20 text-sm" : "py-4 pl-5 pr-28 text-lg md:text-xl"
+            }`}
+          />
+          <button
+            type="submit"
+            disabled={loading || !value.trim()}
+            className={`absolute right-2 top-1/2 -translate-y-1/2 rounded-xl bg-ink font-medium text-paper transition hover:bg-ink-soft disabled:opacity-30 ${
+              compact ? "px-2.5 py-1 text-xs" : "px-4 py-2 text-sm"
+            }`}
           >
-            {suggestions.map((s, i) => (
-              <li key={s.slug}>
-                <button
-                  type="button"
-                  onMouseDown={() => {
-                    setValue(s.title);
-                    setLoading(true);
-                    goToTimeline(s.title);
-                  }}
-                  className={`block w-full px-4 py-2.5 text-left text-sm transition ${
-                    i === active ? "bg-paper-soft text-ink" : "text-ink-soft hover:bg-paper-soft hover:text-ink"
-                  }`}
-                >
-                  {s.title}
-                </button>
-              </li>
-            ))}
-          </motion.ul>
-        )}
-      </AnimatePresence>
-    </div>
+            {loading ? "Building…" : compact ? "Go" : "Explore"}
+          </button>
+        </form>
+
+        <AnimatePresence>
+          {open && suggestions.length > 0 && (
+            <motion.ul
+              initial={{ opacity: 0, y: -4 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -4 }}
+              className="absolute left-0 right-0 top-full z-50 mt-2 overflow-hidden rounded-xl border border-ink/10 bg-white py-1 shadow-node"
+              onMouseDown={() => blurTimer.current && clearTimeout(blurTimer.current)}
+            >
+              {suggestions.map((s, i) => (
+                <li key={s.slug}>
+                  <button
+                    type="button"
+                    onMouseDown={() => {
+                      setValue(s.title);
+                      navigateTo(s.title);
+                    }}
+                    className={`block w-full px-4 py-2.5 text-left text-sm transition ${
+                      i === active ? "bg-paper-soft text-ink" : "text-ink-soft hover:bg-paper-soft hover:text-ink"
+                    }`}
+                  >
+                    {s.title}
+                  </button>
+                </li>
+              ))}
+            </motion.ul>
+          )}
+        </AnimatePresence>
+      </div>
+    </>
+  );
+}
+
+function TimelineStarterPill({ topic }: { topic: string }) {
+  const { go, navigating } = useTimelineNavigate();
+  const loading = navigating === topic;
+
+  return (
+    <>
+      {loading && <TimelineNavigatingOverlay title={topic} />}
+      <button
+        type="button"
+        disabled={loading}
+        onClick={() => go(topic)}
+        className="rounded-full border border-ink/10 bg-white px-4 py-2 text-sm text-ink-soft shadow-sm transition hover:border-accent/40 hover:text-ink disabled:opacity-60"
+      >
+        {loading ? "Building…" : topic}
+      </button>
+    </>
   );
 }
 
@@ -161,13 +179,7 @@ export default function TimelineSearch({ autoFocus = true }: { autoFocus?: boole
 
       <div className="mt-6 flex flex-wrap justify-center gap-2">
         {STARTERS.map((t) => (
-          <Link
-            key={t}
-            href={`/timeline/${titleToSlug(t)}?q=${encodeURIComponent(t)}`}
-            className="rounded-full border border-ink/10 bg-white px-4 py-2 text-sm text-ink-soft shadow-sm transition hover:border-accent/40 hover:text-ink"
-          >
-            {t}
-          </Link>
+          <TimelineStarterPill key={t} topic={t} />
         ))}
       </div>
     </div>
