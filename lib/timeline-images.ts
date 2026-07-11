@@ -1,12 +1,17 @@
-import { fetchWikiLeadImage } from "./wikipedia";
 import type { TapsaTimeline } from "./timeline-types";
+import { fetchGatedWikiImage } from "./timeline-images-gate";
 
-/** Attach Wikipedia lead thumbnails to each event; failures leave imageUrl unset. */
+/** Attach gated Wikipedia images to landmark timeline events. */
 export async function attachEventImages(timeline: TapsaTimeline): Promise<TapsaTimeline> {
   const events = await Promise.all(
     timeline.events.map(async (e) => {
-      const imageUrl = (await fetchWikiLeadImage(e.wikiTitle)) ?? undefined;
-      return { ...e, imageUrl };
+      if (e.tier === "context" && !e.imageUrl) return e;
+      const image = await fetchGatedWikiImage(e.wikiTitle);
+      return {
+        ...e,
+        image,
+        imageUrl: image?.url,
+      };
     }),
   );
   return { ...timeline, events };

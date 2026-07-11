@@ -7,7 +7,10 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "prebake": "tsx scripts/prebake.ts"
+    "prebake": "tsx scripts/prebake.ts",
+    "test:timeline": "tsx scripts/test-timeline-unit.ts",
+    "verify:timelines": "tsx scripts/verify-timelines.ts",
+    "grep:timeline-topics": "tsx scripts/grep-timeline-topics.ts"
   },
   "dependencies": {
     "framer-motion": "^11.11.17",

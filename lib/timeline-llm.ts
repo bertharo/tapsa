@@ -253,13 +253,17 @@ function validateAndNormalize(raw: RawOutput, slug: string): { events: TimelineE
       id: `evt-${e.year_sort}-${titleToSlug(wikiTitle)}`,
       yearDisplay: e.year_display.trim(),
       yearSort: e.year_sort,
+      sortKey: e.year_sort,
+      precision: "year",
       title,
       oneLiner: e.one_liner.trim().slice(0, 160),
       body: e.body.trim(),
       category: e.category,
       eraId: e.era_id,
+      tier: "landmark",
       wikiTitle,
       wikipediaSlug: titleToSlug(wikiTitle.replace(/_/g, " ")),
+      image: null,
     });
   }
 
@@ -367,6 +371,9 @@ export async function generateTimeline(
     wikiTitle,
     revisionId: meta.revisionId,
     cacheKey: meta.cacheKey,
+    topicType: "CONCEPT",
+    orientation: result.parsed.topic.trim(),
+    sparse: result.events.length < 5,
   };
 }
 
