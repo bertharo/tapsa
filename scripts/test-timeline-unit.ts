@@ -5,6 +5,7 @@ import { assignTiers, scoreSignificance } from "../lib/timeline-significance";
 import { dedupeEvents, type RawExtractedEvent } from "../lib/timeline-extract";
 import { clusterEventsIntoEras, deriveEras, sectionsFormChronologicalChapters } from "../lib/timeline-eras";
 import { gateImage } from "../lib/timeline-images-gate";
+import { categoryFromWikiCategories } from "../lib/timeline-event-category";
 
 function testDates() {
   const bce = parseDateFromText("44 BC");
@@ -110,9 +111,16 @@ function testImages() {
   assert.ok(ok?.url.includes("photo"));
 }
 
+function testCategories() {
+  assert.equal(categoryFromWikiCategories(["World War II battles"]), "MILITARY");
+  assert.equal(categoryFromWikiCategories(["American political history"]), "POLITICS");
+  assert.equal(categoryFromWikiCategories(["Random disambiguation pages"]), undefined);
+}
+
 testDates();
 testSignificance();
 testDedupe();
 testEras();
 testImages();
+testCategories();
 console.log("timeline unit checks passed");
