@@ -66,7 +66,7 @@ function mapGenerationError(err: unknown, slug: string, title: string): Error {
   if (msg.includes("groq_api_key") || msg.includes("tapsa_llm_api_key")) {
     return new TimelineUnavailableError("missing_api_key");
   }
-  if (msg.includes("rate limit") || msg.includes("429")) {
+  if (msg.includes("rate limit") || msg.includes("429") || msg.includes("413") || msg.includes("too large")) {
     return new TimelineUnavailableError("rate_limit");
   }
   if (

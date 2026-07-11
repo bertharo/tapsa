@@ -6,8 +6,9 @@ import { titleToSlug } from "./slug";
 
 const MIN_EVENTS = 8;
 const MAX_EVENTS = 30;
-const MAX_ARTICLE_CHARS = 9000;
-const MAX_OUTPUT_TOKENS = 4096;
+/** Groq 8b instant allows ~6k tokens/request — keep input small. */
+const ARTICLE_CHAR_LIMITS = [4000, 2500, 1500] as const;
+const MAX_OUTPUT_TOKENS = 2048;
 
 /** Timeline extraction models — 8b default for Groq free-tier headroom. */
 const TIMELINE_MODELS = [
@@ -34,6 +35,12 @@ function isRateLimitError(err: unknown): boolean {
   return status === 429 || msg.includes("429") || msg.includes("rate limit");
 }
 
+function isPayloadTooLarge(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase();
+  const status = (err as { status?: number })?.status;
+  return status === 413 || msg.includes("413") || msg.includes("too large") || msg.includes("request too large");
+}
+
 function parseRetryAfterMs(message: string): number | null {
   const m = message.match(/try again in (?:(\d+)m)?(?:(\d+(?:\.\d+)?)s)?/i);
   if (!m) return null;
@@ -43,11 +50,11 @@ function parseRetryAfterMs(message: string): number | null {
   return Math.ceil((minutes * 60 + seconds) * 1000);
 }
 
-function trimArticleForLlm(text: string): string {
-  if (text.length <= MAX_ARTICLE_CHARS) return text;
-  const head = Math.floor(MAX_ARTICLE_CHARS * 0.72);
-  const tail = MAX_ARTICLE_CHARS - head - 48;
-  return `${text.slice(0, head)}\n\n[…middle of article omitted for length…]\n\n${text.slice(-tail)}`;
+function trimArticleForLlm(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  const head = Math.floor(maxChars * 0.72);
+  const tail = maxChars - head - 48;
+  return `${text.slice(0, head)}\n\n[…middle omitted…]\n\n${text.slice(-tail)}`;
 }
 
 async function chatWithRetry(
@@ -68,7 +75,7 @@ async function chatWithRetry(
       return resp.choices[0]?.message?.content ?? "";
     } catch (err) {
       lastErr = err;
-      if (!isRateLimitError(err) || attempt === 3) break;
+      if ((!isRateLimitError(err) && !isPayloadTooLarge(err)) || attempt === 3) break;
       const wait =
         parseRetryAfterMs(err instanceof Error ? err.message : String(err)) ??
         Math.min(1500 * 2 ** attempt, 12_000);
@@ -85,22 +92,16 @@ export class TimelineExtractionError extends Error {
   }
 }
 
-const EXTRACTION_SYSTEM = `You are a structured-event extraction engine for Tapsa Timelines.
-You receive the full plain-text body of one or more Wikipedia articles about a topic. Extract real dated historical events.
+const EXTRACTION_SYSTEM = `Extract real dated historical events from Wikipedia article text. Output raw JSON only.
 
-An event is something that HAPPENED at a time: a publication, discovery, observation, invention, founding, death, launch, premiere, battle, treaty.
-Section headings, chapter titles, topic names, and table-of-contents labels are NEVER events.
-
-Hard rules:
-1. Every event must have a defensible date grounded in the article text. If no date can be grounded, DROP the event — never default, never guess, never reuse a section index as a year.
-2. Return 12–30 events for a rich article (minimum 8). Spread across the full time range.
-3. title names the EVENT in max 8 words (name who did what, not just the concept — not "Expansion" or "Chapter 7").
-4. Group into 3–5 named eras that partition the time range; every event maps to exactly one era_id. Era names must reflect THIS topic's own history — a person's life stages, an empire's periods, a technology's generations — never generic placeholders like "Era 1".
-5. year_sort is a signed integer for ordering (BC is negative). year_display is the human string ("1915", "c. 300 BC", "1964–1968").
-6. wiki_title is the most relevant Wikipedia article title using underscores.
-7. category is one of: SCIENCE, MATHEMATICS, PHYSICS, ASTRONOMY, OBSERVATION, PHILOSOPHY, CULTURE, TECHNOLOGY.
-8. topic must be the resolved article title.
-9. Output raw JSON only — no markdown fences, no preamble.`;
+Rules:
+- Events are things that HAPPENED (founding, invention, publication, battle, death, launch). Never section headings or "Chapter N".
+- Every event needs a date grounded in the text; drop undated items. Never guess years or reuse section numbers.
+- 8–30 events, spread across time. title ≤8 words, names the event.
+- 3–5 eras partitioning the range; topic-appropriate era names.
+- year_sort: signed integer (BC negative). year_display: human string.
+- wiki_title: Wikipedia title with underscores.
+- category: SCIENCE|MATHEMATICS|PHYSICS|ASTRONOMY|OBSERVATION|PHILOSOPHY|CULTURE|TECHNOLOGY.`;
 
 const rawOutputSchema = z.object({
   topic: z.string().min(1),
@@ -130,6 +131,79 @@ const rawOutputSchema = z.object({
 });
 
 type RawOutput = z.infer<typeof rawOutputSchema>;
+
+const CATEGORY_ALIASES: Record<string, (typeof EVENT_CATEGORIES)[number]> = {
+  SPORT: "CULTURE",
+  SPORTS: "CULTURE",
+  HISTORY: "CULTURE",
+  POLITICS: "CULTURE",
+  MILITARY: "CULTURE",
+  MEDICINE: "SCIENCE",
+  BIOLOGY: "SCIENCE",
+  ENGINEERING: "TECHNOLOGY",
+};
+
+function normalizeCategory(raw: unknown): (typeof EVENT_CATEGORIES)[number] {
+  const u = String(raw ?? "CULTURE").toUpperCase().trim();
+  if ((EVENT_CATEGORIES as readonly string[]).includes(u)) {
+    return u as (typeof EVENT_CATEGORIES)[number];
+  }
+  return CATEGORY_ALIASES[u] ?? "CULTURE";
+}
+
+function coerceRawPayload(data: unknown): unknown {
+  if (!data || typeof data !== "object") return data;
+  const obj = { ...(data as Record<string, unknown>) };
+
+  if (Array.isArray(obj.eras)) {
+    obj.eras = obj.eras.map((era) => {
+      if (!era || typeof era !== "object") return era;
+      const e = era as Record<string, unknown>;
+      return {
+        ...e,
+        id: String(e.id ?? "").trim(),
+        name: String(e.name ?? "").trim(),
+        start: Number(e.start),
+        end: Number(e.end),
+      };
+    });
+  }
+
+  const eras = (obj.eras ?? []) as { id: string; name: string }[];
+  const eraLookup = new Map<string, string>();
+  eras.forEach((era, i) => {
+    eraLookup.set(era.id, era.id);
+    eraLookup.set(String(i + 1), era.id);
+    eraLookup.set(era.name.toLowerCase(), era.id);
+  });
+
+  if (Array.isArray(obj.events)) {
+    obj.events = obj.events.map((event) => {
+      if (!event || typeof event !== "object") return event;
+      const e = event as Record<string, unknown>;
+      let eraId = String(e.era_id ?? "").trim();
+      eraId = eraLookup.get(eraId) ?? eraLookup.get(eraId.toLowerCase()) ?? eraId;
+      return {
+        ...e,
+        year_display: String(e.year_display ?? "").trim(),
+        year_sort: typeof e.year_sort === "string" ? Number.parseInt(e.year_sort, 10) : Number(e.year_sort),
+        title: String(e.title ?? "").trim(),
+        one_liner: String(e.one_liner ?? "").trim(),
+        body: String(e.body ?? "").trim(),
+        category: normalizeCategory(e.category),
+        era_id: eraId,
+        wiki_title: String(e.wiki_title ?? "").trim().replace(/\s+/g, "_"),
+      };
+    });
+  }
+
+  return obj;
+}
+
+function parseRawOutput(text: string): RawOutput {
+  const json = JSON.parse(extractJson(text));
+  return rawOutputSchema.parse(coerceRawPayload(json));
+}
 
 function extractJson(text: string): string {
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
@@ -193,14 +267,9 @@ function validateAndNormalize(raw: RawOutput, slug: string): { events: TimelineE
   return { events, eras };
 }
 
-function buildUserMessage(wikiTitle: string, articleText: string): string {
-  const text = trimArticleForLlm(articleText);
-  return `ARTICLE: ${wikiTitle}
-
-${text}
-
-Return JSON: { topic, eras:[{id,name,start,end}], events:[{year_display,year_sort,title,one_liner,body,category,era_id,wiki_title}] }
-Minimum ${MIN_EVENTS} real dated events. Raw JSON only.`;
+function buildUserMessage(wikiTitle: string, articleText: string, maxChars: number): string {
+  const text = trimArticleForLlm(articleText, maxChars);
+  return `ARTICLE: ${wikiTitle}\n\n${text}\n\nJSON: {topic, eras:[{id,name,start,end}], events:[{year_display,year_sort,title,one_liner,body,category,era_id,wiki_title}]} — min ${MIN_EVENTS} dated events.`;
 }
 
 type TimelineMeta = {
@@ -223,33 +292,36 @@ export async function generateTimeline(
   }
 
   const client = new OpenAI({ apiKey, baseURL });
-  const userMessage = buildUserMessage(wikiTitle, articleText);
-  const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-    { role: "system", content: EXTRACTION_SYSTEM },
-    { role: "user", content: userMessage },
-  ];
 
   const runExtraction = async (extra?: string) => {
-    const msgs = extra
-      ? [...messages.slice(0, 1), { role: "user" as const, content: `${userMessage}\n\n${extra}` }]
-      : messages;
-
     let lastErr: unknown;
-    for (const model of models) {
-      try {
-        const text = await chatWithRetry(client, model, msgs);
-        const parsed = rawOutputSchema.parse(JSON.parse(extractJson(text)));
-        const { events, eras } = validateAndNormalize(parsed, slug);
-        if (events.length < MIN_EVENTS) {
-          throw new TimelineExtractionError(
-            `Only ${events.length} valid events after validation (need ${MIN_EVENTS}).`,
-          );
+    for (const charLimit of ARTICLE_CHAR_LIMITS) {
+      const userMessage = buildUserMessage(wikiTitle, articleText, charLimit);
+      const msgs: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+        { role: "system", content: EXTRACTION_SYSTEM },
+        {
+          role: "user",
+          content: extra ? `${userMessage}\n\n${extra}` : userMessage,
+        },
+      ];
+
+      for (const model of models) {
+        try {
+          const text = await chatWithRetry(client, model, msgs);
+          const parsed = parseRawOutput(text);
+          const { events, eras } = validateAndNormalize(parsed, slug);
+          if (events.length < MIN_EVENTS) {
+            throw new TimelineExtractionError(
+              `Only ${events.length} valid events after validation (need ${MIN_EVENTS}).`,
+            );
+          }
+          return { parsed, events, eras };
+        } catch (err) {
+          lastErr = err;
+          if (isPayloadTooLarge(err)) break;
+          if (isRateLimitError(err)) continue;
+          throw err;
         }
-        return { parsed, events, eras };
-      } catch (err) {
-        lastErr = err;
-        if (isRateLimitError(err)) continue;
-        throw err;
       }
     }
     throw lastErr;
@@ -308,10 +380,10 @@ export async function extractTimelineJson(
   const client = new OpenAI({ apiKey, baseURL });
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
     { role: "system", content: EXTRACTION_SYSTEM },
-    { role: "user", content: buildUserMessage(wikiTitle, articleText) },
+    { role: "user", content: buildUserMessage(wikiTitle, articleText, ARTICLE_CHAR_LIMITS[0]) },
   ];
   const text = await chatWithRetry(client, models[0], messages);
-  const parsed = rawOutputSchema.parse(JSON.parse(extractJson(text)));
+  const parsed = parseRawOutput(text);
   const { events } = validateAndNormalize(parsed, "verify");
   if (events.length < MIN_EVENTS) {
     throw new Error(`Validation left only ${events.length} events.`);
