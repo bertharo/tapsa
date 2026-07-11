@@ -16,6 +16,12 @@ export function isMetaArticleTitle(title: string): boolean {
   return false;
 }
 
+/** Meta-articles worth descending into for dated prose (not table timelines). */
+export function shouldDescendMetaArticle(title: string): boolean {
+  const cleaned = sanitizeWikiText(title).trim();
+  return /^history of\s+/i.test(cleaned);
+}
+
 /** Pull a wiki article title from a list-line body (after the date prefix). */
 export function extractLinkedTitleFromBody(body: string): string | null {
   const cleaned = sanitizeWikiText(body);

@@ -10,6 +10,7 @@ function testHygiene() {
   assert.equal(sanitizeWikiText("D-Day[1]"), "D-Day");
   assert.equal(sanitizeWikiText("Paris (/ˈpærɪs/) falls"), "Paris falls");
   assert.equal(sanitizeWikiText("{{cite web|url=...}} Event happens"), "Event happens");
+  assert.equal(sanitizeWikiText("1 September [ edit ] Polish POWs"), "1 September Polish POWs");
 }
 
 function testMetaDetection() {

@@ -202,3 +202,36 @@ export function compareParsedDates(a: ParsedDate, b: ParsedDate): number {
 export function parsedDateToYearSort(d: ParsedDate): number {
   return d.sortKey;
 }
+
+const MONTH_PATTERN =
+  "January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec";
+
+/** Infer a full date using a year from the section heading when prose omits it. */
+export function parseDateWithSectionContext(
+  text: string,
+  sectionName?: string,
+): ParsedDate | null {
+  const direct = parseDateFromText(text);
+  if (direct) return direct;
+
+  const sectionYear =
+    sectionName?.match(/\((\d{3,4})\)/)?.[1] ??
+    sectionName?.match(/\b(1[0-9]{3}|20[0-9]{2})\b/)?.[1];
+  if (!sectionYear) return null;
+
+  const dayMonth = text.match(
+    new RegExp(`\\b(\\d{1,2})\\s+(${MONTH_PATTERN})\\b`, "i"),
+  );
+  if (dayMonth) {
+    return parseDateFromText(`${dayMonth[1]} ${dayMonth[2]} ${sectionYear}`);
+  }
+
+  const monthYear = text.match(
+    new RegExp(`\\b(${MONTH_PATTERN})\\s+(${sectionYear})\\b`, "i"),
+  );
+  if (monthYear) {
+    return parseDateFromText(`${monthYear[1]} ${monthYear[2]}`);
+  }
+
+  return null;
+}

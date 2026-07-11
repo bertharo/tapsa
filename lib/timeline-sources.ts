@@ -104,7 +104,7 @@ async function buildSource(
 
   const wikiSections = await fetchSections(articleTitle);
   const sectionTexts: ChronologicalSection[] = [];
-  for (const sec of wikiSections.slice(0, 16)) {
+  for (const sec of wikiSections.slice(0, 40)) {
     const { text: st, links } = await fetchSectionContent(articleTitle, sec.index);
     if (st.length > 80) {
       sectionTexts.push({
@@ -157,6 +157,17 @@ export async function resolveChronologicalSources(
   if (!sources.length) {
     const fallback = await buildSource("main_article", mainTitle);
     if (fallback) sources.push(fallback);
+  }
+
+  const hasMain = sources.some(
+    (s) => s.articleTitle.toLowerCase() === mainTitle.toLowerCase(),
+  );
+  const hasDedicated = sources.some(
+    (s) => s.kind === "history_article" || s.kind === "timeline_article",
+  );
+  if (hasDedicated && !hasMain) {
+    const main = await buildSource("main_article", mainTitle);
+    if (main) sources.unshift(main);
   }
 
   const summary = await restSummaryByTitle(mainTitle);

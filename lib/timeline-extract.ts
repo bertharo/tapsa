@@ -7,12 +7,12 @@ import type {
   TopicType,
 } from "./timeline-types";
 import { MIN_TIMELINE_EVENTS, SPARSE_EVENT_THRESHOLD, TIMELINE_SCHEMA_VERSION } from "./timeline-types";
-import { compareParsedDates, parseDateFromText, type ParsedDate } from "./timeline-dates";
+import { compareParsedDates, parseDateFromText, parseDateWithSectionContext, type ParsedDate } from "./timeline-dates";
 import { deriveEras, findEraForSortKey } from "./timeline-eras";
 import { classifyTopicType } from "./timeline-topic-type";
 import { assignTiers, enrichEventSignals } from "./timeline-significance";
-import { passesEventGate } from "./timeline-event-gate";
-import { extractLinkedTitleFromBody, isMetaArticleTitle } from "./timeline-meta";
+import { isJunkWikiExtract, passesEventGate } from "./timeline-event-gate";
+import { extractLinkedTitleFromBody, isMetaArticleTitle, shouldDescendMetaArticle } from "./timeline-meta";
 import { sanitizeWikiText } from "./timeline-text-hygiene";
 import { timelineCacheKey } from "./timeline-resolve";
 import { titleToSlug } from "./slug";
@@ -68,11 +68,173 @@ function cleanEventText(text: string): string {
   return sanitizeWikiText(text);
 }
 
-function titleFromBody(body: string, maxWords = 8): string {
+function titleFromBody(body: string, preferredTitle?: string, maxWords = 8): string {
+  if (preferredTitle && !isMetaArticleTitle(preferredTitle)) {
+    const words = preferredTitle.trim().split(/\s+/);
+    if (words.length <= maxWords) return preferredTitle.trim();
+    return words.slice(0, maxWords).join(" ");
+  }
+
   const cleaned = cleanEventText(body);
-  const first = cleaned.split(/[.;]/)[0]?.trim() ?? cleaned;
-  const words = first.split(/\s+/).slice(0, maxWords);
-  return words.join(" ") || cleaned.slice(0, 60);
+  const parenAlias = cleaned.match(/\(([A-Za-z][^)]{2,40})\)\s*\.?\s*$/);
+  if (parenAlias && !isMetaArticleTitle(parenAlias[1])) return parenAlias[1].trim();
+
+  let first = cleaned.split(/[.;]/)[0]?.trim() ?? cleaned;
+  first = first.replace(/^\d{1,2}\s+[A-Za-z]+\s*/i, "").trim();
+  first = first.replace(/^[A-Za-z]+\s+\d{1,2}\s*/i, "").trim();
+
+  const words = first.split(/\s+/).filter(Boolean);
+  if (words.length > maxWords) {
+    const slice = words.slice(0, maxWords).join(" ");
+    if (!DANGLING_TITLE_END.test(slice)) return slice;
+    return words.slice(0, Math.max(3, maxWords - 1)).join(" ");
+  }
+  return first || cleaned.slice(0, 60);
+}
+
+const DANGLING_TITLE_END =
+  /\b(the|a|an|in|on|at|of|and|or|to|for|with|under|during|her|his|their|its|before|after)\s*$/i;
+
+function looksLikeListLine(body: string): boolean {
+  const b = body.trim();
+  if (b.length <= 220) return true;
+  return /^\d{1,2}\s+[A-Za-z]/.test(b) || /^[A-Za-z]+\s+\d{4}/.test(b) || /^\d{4}\s/.test(b);
+}
+
+function pickBestEventLink(body: string, links: CandidateLink[]): CandidateLink | null {
+  const focus = body.slice(0, 200).toLowerCase();
+  let best: CandidateLink | null = null;
+  let bestScore = 0;
+
+  for (const link of links) {
+    if (isMetaArticleTitle(link.title)) continue;
+    const title = link.title.trim();
+    if (title.length < 4 || title.split(/\s+/).length > 12) continue;
+
+    const tokens = title
+      .toLowerCase()
+      .split(/\s+/)
+      .filter((w) => w.length > 3);
+    if (!tokens.length) continue;
+    const matched = tokens.filter((w) => focus.includes(w));
+    if (matched.length < Math.min(2, tokens.length)) continue;
+
+    let score = matched.length * 10 + title.length;
+    if (/\b(battle|invasion|attack|raid|bombing|surrender|treaty|fall|massacre|holocaust)\b/i.test(title)) {
+      score += 25;
+    }
+    if (/\b(world war|second world war|first world war)\b/i.test(title) && !focus.includes("world war")) {
+      score -= 40;
+    }
+    if (score > bestScore) {
+      best = link;
+      bestScore = score;
+    }
+  }
+
+  return best;
+}
+
+function titleFromNarrativeSentence(body: string): string | null {
+  const cleaned = cleanEventText(body);
+  const including = cleaned.match(/\bincluding\s+(?:the\s+)?([A-Z][A-Za-z0-9'’\- ]{3,40})/);
+  if (including) {
+    const phrase = including[1].split(/[,.;]/)[0]?.trim();
+    if (phrase && phrase.length >= 4) return phrase;
+  }
+  const invasion = cleaned.match(
+    /\b((?:German|Japanese|Soviet|Allied|American|British)\s+(?:invasion|attack|occupation|annexation)\s+of\s+[A-Z][A-Za-z'’\- ]+)/i,
+  );
+  if (invasion) return invasion[1].trim().split(/[,.;]/)[0] ?? null;
+  const attackOn = cleaned.match(/\b(?:attack|plan of the attack)\s+on\s+([A-Z][A-Za-z'’\- ]{3,40})/i);
+  if (attackOn) {
+    const target = attackOn[1]
+      .trim()
+      .split(/[,.;]/)[0]
+      ?.split(/\s+to\s+/i)[0]
+      ?.trim();
+    if (target) return `Attack on ${target}`;
+  }
+  const verbLead = cleaned.match(
+    /\b([A-Z][A-Za-z'’\-]+(?:\s+[A-Za-z'’\-]+){0,5})\s+(?:invades|invaded|attacks|attacked|declares war|surrenders|surrendered|falls|fell|lands|landed)\b/,
+  );
+  if (verbLead) return verbLead[1].trim();
+  return null;
+}
+
+function focusIncludesPhrase(body: string, phrase: string): boolean {
+  const focus = body.slice(0, 220).toLowerCase();
+  const p = phrase.toLowerCase();
+  if (focus.includes(p)) return true;
+  const tokens = p.split(/\s+/).filter((w) => w.length > 3);
+  return tokens.length >= 2 && tokens.every((w) => focus.includes(w));
+}
+
+function resolveEventFromLinks(
+  ev: RawExtractedEvent,
+  links: CandidateLink[],
+  sourceArticleTitle: string,
+): RawExtractedEvent {
+  const sourceNorm = sourceArticleTitle.toLowerCase().replace(/_/g, " ");
+  let title = ev.title;
+  let wikiTitle = ev.wikiTitle;
+
+  if (looksLikeListLine(ev.body)) {
+    const link = pickBestEventLink(ev.body, links);
+    if (link && focusIncludesPhrase(ev.body, link.title)) {
+      title = titleFromBody(ev.body, link.title);
+      wikiTitle = link.title.replace(/ /g, "_");
+    }
+  } else {
+    const narrative = titleFromNarrativeSentence(ev.body);
+    if (narrative) title = narrative;
+  }
+
+  const oneLiner = buildOneLiner(title, ev.body);
+  const candidate = { date: ev.date, title, oneLiner, body: ev.body, wikiTitle };
+  if (
+    !passesEventGate(candidate, { topicTitle: sourceNorm }) ||
+    normalizeTitle(title) === normalizeTitle(sourceNorm)
+  ) {
+    return ev;
+  }
+
+  return {
+    ...ev,
+    title,
+    oneLiner,
+    wikiTitle,
+    hasOwnArticle: wikiTitle.replace(/_/g, " ").toLowerCase() !== sourceNorm,
+    linkCount: Math.max(ev.linkCount, wikiTitle !== ev.wikiTitle ? 1 : 0),
+  };
+}
+
+function extractProseDatedEvents(
+  text: string,
+  defaultWikiTitle: string,
+  inLead: boolean,
+  sectionMeta?: { name: string; intro: string },
+): RawExtractedEvent[] {
+  const out: RawExtractedEvent[] = [];
+  const sentences = text.split(/(?<=[.!?])\s+/);
+
+  for (const sentence of sentences) {
+    const cleaned = cleanEventText(sentence);
+    if (cleaned.length < 25 || isJunkWikiExtract(cleaned)) continue;
+    if (isMetaArticleTitle(cleaned)) continue;
+
+    const date = parseDateWithSectionContext(cleaned, sectionMeta?.name);
+    if (!date || date.precision === "range" || date.precision === "century") continue;
+    if (date.precision === "year" && date.sortKey > 0 && date.sortKey < 1800) {
+      if (/\b(day|days|hour|hours|doi)\b/i.test(cleaned)) continue;
+    }
+    if (date.precision === "year" && date.sortKey > 0 && date.sortKey < 900) continue;
+
+    const ev = buildRawEvent(date, cleaned, defaultWikiTitle, inLead, sectionMeta);
+    if (ev) out.push(ev);
+  }
+
+  return out;
 }
 
 const SEMICOLON_LINE =
@@ -198,6 +360,12 @@ type SourceExtractResult = {
   metaTitles: string[];
 };
 
+const NAV_SECTION =
+  /^(see also|external links|references|notes|further reading|bibliography|main timelines|timelines|summary|overview)$/i;
+
+const BACKGROUND_SECTION =
+  /^(background|causes|aftermath|start and end|casualties|genocide|impact|legacy|assessment|effects|consequences)/i;
+
 function extractFromSource(
   source: ChronologicalSource,
   leadText: string,
@@ -209,22 +377,30 @@ function extractFromSource(
   const metaTitles: string[] = [];
   const allLinks: CandidateLink[] = [];
 
-  const leadChunk = source.text;
-  const inLeadRoot = leadText.length > 0 && leadChunk.slice(0, 200) === leadText.slice(0, 200);
-  for (const line of leadChunk.split(/\n+/)) {
-    const { event, metaTitle } = extractFromLine(
-      line,
-      defaultWiki,
-      inLeadRoot,
-      undefined,
-      allowMetaDescent,
-    );
-    if (event) events.push(event);
-    if (metaTitle) metaTitles.push(metaTitle);
+  const skipRootText =
+    source.kind === "timeline_article" || source.sections.length >= 3;
+  const leadChunk = skipRootText ? "" : source.text;
+  const inLeadRoot =
+    !skipRootText && leadText.length > 0 && leadChunk.slice(0, 200) === leadText.slice(0, 200);
+
+  if (leadChunk) {
+    for (const line of leadChunk.split(/\n+/)) {
+      const { event, metaTitle } = extractFromLine(
+        line,
+        defaultWiki,
+        inLeadRoot,
+        undefined,
+        allowMetaDescent,
+      );
+      if (event) events.push(event);
+      if (metaTitle) metaTitles.push(metaTitle);
+    }
+    events.push(...extractInlineSentences(leadChunk, defaultWiki, inLeadRoot));
   }
-  events.push(...extractInlineSentences(leadChunk, defaultWiki, inLeadRoot));
 
   for (const section of source.sections) {
+    if (NAV_SECTION.test(section.name.trim())) continue;
+
     allLinks.push(...section.links);
     const meta = { name: section.name, intro: section.intro };
     const lines = section.text.split(/\n+/);
@@ -237,18 +413,42 @@ function extractFromSource(
         allowMetaDescent,
       );
       if (event) {
-        events.push(enrichEventSignals(event, section.links, mainArticleTitle));
+        events.push(
+          resolveEventFromLinks(
+            enrichEventSignals(event, section.links, mainArticleTitle),
+            section.links,
+            mainArticleTitle,
+          ),
+        );
       }
       if (metaTitle) metaTitles.push(metaTitle);
     }
     for (const ev of extractInlineSentences(section.text, defaultWiki, false, meta)) {
-      events.push(enrichEventSignals(ev, section.links, mainArticleTitle));
+      events.push(
+        resolveEventFromLinks(
+          enrichEventSignals(ev, section.links, mainArticleTitle),
+          section.links,
+          mainArticleTitle,
+        ),
+      );
+    }
+    if (!BACKGROUND_SECTION.test(section.name.trim())) {
+      for (const ev of extractProseDatedEvents(section.text, defaultWiki, false, meta)) {
+        events.push(
+          resolveEventFromLinks(
+            enrichEventSignals(ev, section.links, mainArticleTitle),
+            section.links,
+            mainArticleTitle,
+          ),
+        );
+      }
     }
   }
 
-  const enriched = events.map((ev) =>
-    ev.sectionName ? ev : enrichEventSignals(ev, allLinks, mainArticleTitle),
-  );
+  const enriched = events.map((ev) => {
+    const base = ev.sectionName ? ev : enrichEventSignals(ev, allLinks, mainArticleTitle);
+    return resolveEventFromLinks(base, allLinks, mainArticleTitle);
+  });
 
   return { events: enriched, metaTitles };
 }
@@ -263,7 +463,7 @@ async function descendMetaArticles(
 
   for (const metaTitle of unique) {
     const key = metaTitle.toLowerCase();
-    if (seen.has(key) || !isMetaArticleTitle(metaTitle)) continue;
+    if (seen.has(key) || !shouldDescendMetaArticle(metaTitle)) continue;
     seen.add(key);
 
     try {
@@ -418,6 +618,15 @@ export async function extractTimelineFromSources(
     );
     raw.push(...events);
     metaQueue.push(...metaTitles);
+  }
+
+  if (chronology.lead.length > 80) {
+    const leadEvents = extractProseDatedEvents(
+      chronology.lead,
+      chronology.mainTitle.replace(/ /g, "_"),
+      true,
+    ).map((ev) => enrichEventSignals(ev, [], chronology.mainTitle));
+    raw.push(...leadEvents);
   }
 
   if (metaQueue.length) {

@@ -139,6 +139,15 @@ async function verifyWorldWarII(): Promise<void> {
   const landmarks = timeline.events.filter((e) => e.tier === "landmark");
   if (landmarks.length < 3) throw new Error("Expected multiple landmark WWII events");
 
+  const titles = landmarks.map((e) => e.title.toLowerCase()).join(" ");
+  const hasRecognizable =
+    /pearl harbor|normandy|d-day|invasion of poland|german invasion|december 1941|hiroshima|battle of britain|stalingrad/.test(
+      `${titles} ${timeline.events.map((e) => e.body).join(" ").toLowerCase()}`,
+    );
+  if (!hasRecognizable) {
+    throw new Error(`WWII landmarks lack recognizable events: ${landmarks.slice(0, 5).map((e) => e.title).join(" | ")}`);
+  }
+
   console.log("  ✓ pass");
 }
 
