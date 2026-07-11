@@ -5,6 +5,7 @@ import {
   isTimelineUnavailable,
   isTopicNotFound,
 } from "@/lib/timeline-errors";
+import { getDisambiguationOptions } from "@/lib/timeline-resolve";
 import { slugToTitleQuery } from "@/lib/slug";
 
 export const runtime = "nodejs";
@@ -20,6 +21,11 @@ export async function GET(req: NextRequest, { params }: { params: Params }) {
   }
 
   try {
+    const options = await getDisambiguationOptions(topic);
+    if (options) {
+      return NextResponse.json({ disambiguation: true, options });
+    }
+
     const result = await getOrCreateTimeline(topic);
     return NextResponse.json({ timeline: result.timeline, cacheHit: result.cacheHit });
   } catch (err) {

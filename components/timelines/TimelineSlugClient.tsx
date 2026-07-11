@@ -2,15 +2,40 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import TimelineExplorer from "./TimelineExplorer";
 import TimelineSearch from "./TimelineSearch";
+import TimelineGeneratingShell from "./TimelineGeneratingShell";
 import type { TapsaTimeline } from "@/lib/timeline-types";
 import { slugToTitleQuery } from "@/lib/slug";
 
 function displayQuery(q: string): string {
   const s = q.trim();
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+}
+
+function timelineCacheKey(slug: string, query: string): string {
+  return `tapsa:timeline:v1:${slug}:${query.trim().toLowerCase()}`;
+}
+
+function readSessionTimeline(slug: string, query: string): TapsaTimeline | null {
+  try {
+    const raw = sessionStorage.getItem(timelineCacheKey(slug, query));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as TapsaTimeline;
+    if (parsed?.events?.length && parsed.slug) return parsed;
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+function writeSessionTimeline(slug: string, query: string, timeline: TapsaTimeline) {
+  try {
+    sessionStorage.setItem(timelineCacheKey(slug, query), JSON.stringify(timeline));
+  } catch {
+    /* quota */
+  }
 }
 
 function TimelineErrorShell({ title, body }: { title: string; body: string }) {
@@ -21,59 +46,82 @@ function TimelineErrorShell({ title, body }: { title: string; body: string }) {
       <div className="mt-6 w-full">
         <TimelineSearch />
       </div>
-      <Link href="/timelines" className="mt-6 text-sm text-ink-faint hover:text-ink-muted">
-        ← All timelines
+      <Link href="/" className="mt-6 text-sm text-ink-faint hover:text-ink-muted">
+        ← Home
       </Link>
     </main>
   );
 }
 
-function TimelineGeneratingShell({ title }: { title: string }) {
-  return (
-    <div className="flex h-[100dvh] flex-col overflow-hidden bg-paper">
-      <header className="shrink-0 border-b border-ink/5 bg-paper px-4 py-4 md:px-6">
-        <div className="mx-auto max-w-6xl">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-accent">
-            Tapsa Timelines
-          </p>
-          <h1 className="font-timeline-serif mt-1 text-2xl font-medium text-ink md:text-3xl">
-            {title}
-          </h1>
-        </div>
-      </header>
-
-      <div className="night-sky relative flex min-h-0 flex-1 flex-col items-center justify-center px-6">
-        <div className="night-stars night-stars-1 pointer-events-none absolute inset-0" />
-        <div className="night-stars night-stars-2 pointer-events-none absolute inset-0" />
-        <div className="relative z-10 max-w-sm text-center">
-          <div className="mx-auto mb-5 h-10 w-10 animate-pulse rounded-full border-2 border-white/20 bg-white/10" />
-          <p className="font-timeline-serif text-lg text-white/90">Building your timeline…</p>
-          <p className="mt-2 text-sm text-white/50">
-            Extracting dated events from Wikipedia. First visit can take up to a minute.
-          </p>
-        </div>
-      </div>
-    </div>
-  );
-}
+type DisambiguationOption = { title: string; slug: string };
 
 type LoadState =
   | { status: "loading" }
   | { status: "ready"; timeline: TapsaTimeline }
+  | { status: "disambiguation"; options: DisambiguationOption[]; query: string }
   | { status: "not_found" }
   | { status: "too_thin" }
   | { status: "unavailable"; reason?: string }
   | { status: "error" };
 
+function DisambiguationPicker({
+  query,
+  options,
+}: {
+  query: string;
+  options: DisambiguationOption[];
+}) {
+  const router = useRouter();
+  const display = displayQuery(query);
+
+  return (
+    <main className="mx-auto flex min-h-screen w-full max-w-xl flex-col items-center justify-center px-5 py-16 text-center">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-accent">
+        Tapsa Timelines
+      </p>
+      <h1 className="font-timeline-serif mt-2 text-3xl font-medium text-ink">
+        Did you mean…
+      </h1>
+      <p className="mt-3 text-ink-muted">
+        &ldquo;{display}&rdquo; could refer to several topics. Pick one to build its timeline.
+      </p>
+      <div className="mt-8 flex w-full flex-wrap justify-center gap-2">
+        {options.map((opt) => (
+          <button
+            key={opt.slug}
+            type="button"
+            onClick={() =>
+              router.push(
+                `/timeline/${encodeURIComponent(opt.slug)}?q=${encodeURIComponent(opt.title)}`,
+              )
+            }
+            className="rounded-full border border-ink/10 bg-white px-4 py-2 text-sm text-ink-soft shadow-sm transition hover:border-accent/40 hover:text-ink"
+          >
+            {opt.title}
+          </button>
+        ))}
+      </div>
+      <div className="mt-10 w-full">
+        <TimelineSearch />
+      </div>
+    </main>
+  );
+}
+
 export default function TimelineSlugClient({ slug }: { slug: string }) {
   const searchParams = useSearchParams();
   const query = searchParams.get("q")?.trim() || slugToTitleQuery(slug);
-  const [state, setState] = useState<LoadState>({ status: "loading" });
+  const [state, setState] = useState<LoadState>(() => {
+    if (typeof window === "undefined") return { status: "loading" };
+    const cached = readSessionTimeline(slug, query);
+    return cached ? { status: "ready", timeline: cached } : { status: "loading" };
+  });
   const displayTitle = displayQuery(query);
 
   useEffect(() => {
     let cancelled = false;
-    setState({ status: "loading" });
+    const cached = readSessionTimeline(slug, query);
+    if (!cached) setState({ status: "loading" });
 
     (async () => {
       try {
@@ -81,12 +129,19 @@ export default function TimelineSlugClient({ slug }: { slug: string }) {
         const res = await fetch(apiUrl, { cache: "no-store" });
         const data = (await res.json()) as {
           timeline?: TapsaTimeline;
+          disambiguation?: boolean;
+          options?: DisambiguationOption[];
           error?: string;
           reason?: string;
         };
         if (cancelled) return;
 
+        if (data.disambiguation && data.options?.length) {
+          setState({ status: "disambiguation", options: data.options, query });
+          return;
+        }
         if (res.ok && data.timeline) {
+          writeSessionTimeline(slug, query, data.timeline);
           setState({ status: "ready", timeline: data.timeline });
           return;
         }
@@ -110,6 +165,9 @@ export default function TimelineSlugClient({ slug }: { slug: string }) {
   }
   if (state.status === "ready") {
     return <TimelineExplorer timeline={state.timeline} />;
+  }
+  if (state.status === "disambiguation") {
+    return <DisambiguationPicker query={state.query} options={state.options} />;
   }
   if (state.status === "not_found") {
     return (

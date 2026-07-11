@@ -5,6 +5,12 @@
 // restart in a loop. Global watchpack polling avoids native watchers entirely.
 const nextConfig = {
   reactStrictMode: true,
+  async redirects() {
+    return [
+      { source: "/timelines", destination: "/", permanent: true },
+      { source: "/timelines/:slug", destination: "/timeline/:slug", permanent: true },
+    ];
+  },
 };
 
 export default nextConfig;

@@ -14,7 +14,7 @@ function goToTimeline(topic: string) {
   if (!q) return;
   const slug = titleToSlug(q);
   if (!slug) return;
-  const url = `/timelines/${encodeURIComponent(slug)}?q=${encodeURIComponent(q)}`;
+  const url = `/timeline/${encodeURIComponent(slug)}?q=${encodeURIComponent(q)}`;
   window.location.assign(url);
 }
 
@@ -163,7 +163,7 @@ export default function TimelineSearch({ autoFocus = true }: { autoFocus?: boole
         {STARTERS.map((t) => (
           <Link
             key={t}
-            href={`/timelines/${titleToSlug(t)}?q=${encodeURIComponent(t)}`}
+            href={`/timeline/${titleToSlug(t)}?q=${encodeURIComponent(t)}`}
             className="rounded-full border border-ink/10 bg-white px-4 py-2 text-sm text-ink-soft shadow-sm transition hover:border-accent/40 hover:text-ink"
           >
             {t}

@@ -84,6 +84,38 @@ function scoreTitle(title: string, preferHistory: boolean, preferTimeline: boole
   return 1;
 }
 
+export type DisambiguationOption = { title: string; slug: string };
+
+/**
+ * When the user's query lands on a Wikipedia disambiguation page, return
+ * concrete article choices instead of silently picking the next search hit.
+ */
+export async function getDisambiguationOptions(query: string): Promise<DisambiguationOption[] | null> {
+  const trimmed = query.trim();
+  if (!trimmed) return null;
+
+  const direct = await restSummaryByTitle(trimmed);
+  const directIsDisambig = direct?.type === "disambiguation";
+
+  if (!directIsDisambig) {
+    const hits = await searchTitles(trimmed, 10);
+    const first = hits[0];
+    if (!first || !(await isDisambiguation(first))) return null;
+    const firstNorm = first.toLowerCase().replace(/\s+/g, " ");
+    const qNorm = trimmed.toLowerCase().replace(/\s+/g, " ");
+    if (firstNorm !== qNorm) return null;
+  }
+
+  const hits = await searchTitles(trimmed, 12);
+  const options: DisambiguationOption[] = [];
+  for (const title of hits) {
+    if (await isDisambiguation(title)) continue;
+    options.push({ title, slug: titleToSlug(title) });
+    if (options.length >= 8) break;
+  }
+  return options.length >= 2 ? options : null;
+}
+
 /** Pick the first search hit that is not a disambiguation page. */
 export async function resolveArticleTitle(query: string): Promise<string> {
   const trimmed = query.trim();

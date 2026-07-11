@@ -4,8 +4,8 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import type { TapsaTimeline, TimelineEvent } from "@/lib/timeline-types";
 import { eraColorMap } from "@/lib/timeline-era-palette";
-import NightSkyCanvas from "./NightSkyCanvas";
-import EventDetailPanel from "./EventDetailPanel";
+import VerticalTimeline from "./VerticalTimeline";
+import TimelineEventDrawer from "./TimelineEventDrawer";
 import { TimelineSearchField } from "./TimelineSearch";
 
 export default function TimelineExplorer({ timeline }: { timeline: TapsaTimeline }) {
@@ -33,14 +33,13 @@ export default function TimelineExplorer({ timeline }: { timeline: TapsaTimeline
     : undefined;
 
   return (
-    <div className="flex h-[100dvh] flex-col overflow-hidden bg-paper">
-      {/* Cream chrome */}
-      <header className="shrink-0 border-b border-ink/5 bg-paper px-4 py-4 md:px-6">
+    <div className="flex min-h-[100dvh] flex-col bg-paper">
+      <header className="sticky top-0 z-20 shrink-0 border-b border-ink/5 bg-paper/95 px-4 py-4 backdrop-blur-sm md:px-6">
         <div className="mx-auto max-w-6xl">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <Link
-                href="/timelines"
+                href="/"
                 className="text-[11px] font-semibold uppercase tracking-[0.2em] text-accent"
               >
                 Tapsa Timelines
@@ -51,7 +50,7 @@ export default function TimelineExplorer({ timeline }: { timeline: TapsaTimeline
             </div>
             <div className="flex shrink-0 items-center gap-2">
               <Link
-                href="/"
+                href="/explore"
                 className="hidden rounded-full border border-ink/10 px-3 py-1.5 text-sm text-ink-soft transition hover:border-accent/40 sm:inline"
               >
                 Map
@@ -62,7 +61,6 @@ export default function TimelineExplorer({ timeline }: { timeline: TapsaTimeline
             </div>
           </div>
 
-          {/* Era filter pills */}
           <div className="mt-3 flex flex-wrap gap-2">
             {timeline.eras.map((era) => {
               const color = colors.get(era.id) ?? "#c9a24b";
@@ -87,18 +85,22 @@ export default function TimelineExplorer({ timeline }: { timeline: TapsaTimeline
         </div>
       </header>
 
-      <NightSkyCanvas
-        timeline={timeline}
-        activeEras={activeEras}
-        selectedId={selected?.id ?? null}
-        onSelect={setSelected}
-      />
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <VerticalTimeline
+          events={timeline.events}
+          eras={timeline.eras}
+          eraColors={colors}
+          activeEras={activeEras}
+          selectedId={selected?.id ?? null}
+          onSelect={setSelected}
+        />
+      </div>
 
-      <footer className="shrink-0 border-t border-ink/5 bg-paper py-2 text-center text-[11px] text-ink-faint">
+      <footer className="shrink-0 border-t border-ink/5 py-2 text-center text-[11px] text-ink-faint">
         Sourced from Wikipedia · No account, no ads
       </footer>
 
-      <EventDetailPanel event={selected} era={selectedEra} onClose={() => setSelected(null)} />
+      <TimelineEventDrawer event={selected} era={selectedEra} onClose={() => setSelected(null)} />
     </div>
   );
 }
