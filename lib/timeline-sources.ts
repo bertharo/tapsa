@@ -9,11 +9,14 @@ export type ChronologicalSourceKind =
   | "history_section"
   | "main_article";
 
+import type { CandidateLink } from "./types";
+
 export type ChronologicalSection = {
   name: string;
   index: string;
   text: string;
   intro: string;
+  links: CandidateLink[];
 };
 
 export type ChronologicalSource = {
@@ -85,13 +88,13 @@ async function buildSource(
     const sections = await fetchSections(articleTitle);
     const historyIdx = findHistorySection(sections);
     if (!historyIdx) return null;
-    const { text } = await fetchSectionContent(articleTitle, historyIdx);
+    const { text, links } = await fetchSectionContent(articleTitle, historyIdx);
     if (text.length < 120) return null;
     return {
       kind,
       articleTitle,
       text,
-      sections: [{ name: "History", index: historyIdx, text, intro: extractSectionIntro(text) }],
+      sections: [{ name: "History", index: historyIdx, text, intro: extractSectionIntro(text), links }],
     };
   }
 
@@ -101,13 +104,14 @@ async function buildSource(
   const wikiSections = await fetchSections(articleTitle);
   const sectionTexts: ChronologicalSection[] = [];
   for (const sec of wikiSections.slice(0, 16)) {
-    const { text: st } = await fetchSectionContent(articleTitle, sec.index);
+    const { text: st, links } = await fetchSectionContent(articleTitle, sec.index);
     if (st.length > 80) {
       sectionTexts.push({
         name: sec.line,
         index: sec.index,
         text: st,
         intro: extractSectionIntro(st),
+        links,
       });
     }
   }

@@ -1,6 +1,7 @@
 /** Unit checks for timeline date parsing, dedupe, eras, and image gating. */
 import assert from "node:assert/strict";
 import { compareParsedDates, parseDateFromText } from "../lib/timeline-dates";
+import { assignTiers, scoreSignificance } from "../lib/timeline-significance";
 import { dedupeEvents, type RawExtractedEvent } from "../lib/timeline-extract";
 import { clusterEventsIntoEras, deriveEras, sectionsFormChronologicalChapters } from "../lib/timeline-eras";
 import { gateImage } from "../lib/timeline-images-gate";
@@ -23,6 +24,29 @@ function testDates() {
   const day = parseDateFromText("March 4, 1789")!;
   const year = parseDateFromText("1789")!;
   assert.ok(compareParsedDates(day, year) < 0);
+}
+
+function testSignificance() {
+  const mk = (partial: Partial<RawExtractedEvent>): RawExtractedEvent => ({
+    date: { sortKey: 1900, precision: "year", display: "1900", subSort: 0 },
+    title: "Event",
+    oneLiner: "Event happened",
+    body: "Short",
+    wikiTitle: "Test",
+    inLead: false,
+    linkCount: 0,
+    hasOwnArticle: false,
+    ...partial,
+  });
+  const lead = mk({ inLead: true, body: "x".repeat(200) });
+  const minor = mk({ body: "tiny" });
+  assert.ok(scoreSignificance(lead) > scoreSignificance(minor));
+
+  const events = [lead, minor, mk({ title: "B" }), mk({ title: "C" }), mk({ title: "D" })];
+  const eras = [{ id: "era-1", start: 1800, end: 2000 }];
+  const tiers = assignTiers(events, eras);
+  assert.equal(tiers.get(lead), "landmark");
+  assert.equal(tiers.get(minor), "context");
 }
 
 function testDedupe() {
@@ -87,6 +111,7 @@ function testImages() {
 }
 
 testDates();
+testSignificance();
 testDedupe();
 testEras();
 testImages();

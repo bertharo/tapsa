@@ -11,6 +11,7 @@ import { MIN_TIMELINE_EVENTS, SPARSE_EVENT_THRESHOLD, TIMELINE_SCHEMA_VERSION } 
 import { compareParsedDates, parseDateFromText, type ParsedDate } from "./timeline-dates";
 import { deriveEras, findEraForSortKey } from "./timeline-eras";
 import { classifyTopicType } from "./timeline-topic-type";
+import { assignTiers, enrichEventSignals } from "./timeline-significance";
 import { timelineCacheKey } from "./timeline-resolve";
 import { titleToSlug } from "./slug";
 import { rankCandidates } from "./wikipedia";
@@ -170,9 +171,11 @@ function extractInlineSentences(
 function extractFromSource(
   source: ChronologicalSource,
   leadText: string,
+  mainArticleTitle: string,
 ): RawExtractedEvent[] {
   const defaultWiki = source.articleTitle.replace(/ /g, "_");
   const events: RawExtractedEvent[] = [];
+  const allLinks: CandidateLink[] = [];
 
   const leadChunk = source.text;
   const inLeadRoot = leadText.length > 0 && leadChunk.slice(0, 200) === leadText.slice(0, 200);
@@ -183,16 +186,23 @@ function extractFromSource(
   events.push(...extractInlineSentences(leadChunk, defaultWiki, inLeadRoot));
 
   for (const section of source.sections) {
+    allLinks.push(...section.links);
     const meta = { name: section.name, intro: section.intro };
     const lines = section.text.split(/\n+/);
     for (const line of lines) {
       const ev = extractFromLine(line, defaultWiki, false, meta);
-      if (ev) events.push(ev);
+      if (ev) {
+        events.push(enrichEventSignals(ev, section.links, mainArticleTitle));
+      }
     }
-    events.push(...extractInlineSentences(section.text, defaultWiki, false, meta));
+    for (const ev of extractInlineSentences(section.text, defaultWiki, false, meta)) {
+      events.push(enrichEventSignals(ev, section.links, mainArticleTitle));
+    }
   }
 
-  return events;
+  return events.map((ev) =>
+    ev.sectionName ? ev : enrichEventSignals(ev, allLinks, mainArticleTitle),
+  );
 }
 
 export function dedupeEvents(events: RawExtractedEvent[]): RawExtractedEvent[] {
@@ -212,27 +222,6 @@ export function dedupeEvents(events: RawExtractedEvent[]): RawExtractedEvent[] {
   }
 
   return out;
-}
-
-function scoreSignificance(ev: RawExtractedEvent): number {
-  let score = 0;
-  if (ev.inLead) score += 4;
-  if (ev.hasOwnArticle) score += 3;
-  if (ev.linkCount > 2) score += 2;
-  if (ev.body.length > 120) score += 2;
-  if (ev.date.precision === "day") score += 1;
-  return score;
-}
-
-function assignTiers(events: RawExtractedEvent[]): Map<RawExtractedEvent, EventTier> {
-  const scores = events.map((e) => scoreSignificance(e));
-  const sorted = [...scores].sort((a, b) => b - a);
-  const cutoff = sorted[Math.max(0, Math.floor(events.length * 0.4) - 1)] ?? 0;
-  const tiers = new Map<RawExtractedEvent, EventTier>();
-  for (const ev of events) {
-    tiers.set(ev, scoreSignificance(ev) >= cutoff ? "landmark" : "context");
-  }
-  return tiers;
 }
 
 function transitionalTextFor(
@@ -319,7 +308,7 @@ export async function extractTimelineFromSources(
   let raw: RawExtractedEvent[] = [];
 
   for (const source of chronology.sources) {
-    raw.push(...extractFromSource(source, chronology.lead));
+    raw.push(...extractFromSource(source, chronology.lead, chronology.mainTitle));
   }
 
   raw = dedupeEvents(raw);
@@ -351,7 +340,7 @@ export async function extractTimelineFromSources(
     events: eventPoints,
     topicType,
   });
-  const tiers = assignTiers(raw);
+  const tiers = assignTiers(raw, eras);
   const events = toTimelineEvents(raw, eras, tiers);
 
   const orientation =
