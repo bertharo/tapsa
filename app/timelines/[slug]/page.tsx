@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import TimelineSlugClient from "@/components/timelines/TimelineSlugClient";
 import { getSiteUrl } from "@/lib/site";
 import { slugToTitleQuery } from "@/lib/slug";
@@ -28,5 +29,15 @@ export function generateMetadata({ params }: { params: Params }): Metadata {
 }
 
 export default function TimelineTopicPage({ params }: { params: Params }) {
-  return <TimelineSlugClient slug={params.slug} />;
+  return (
+    <Suspense
+      fallback={
+        <div className="flex h-[100dvh] items-center justify-center bg-paper">
+          <p className="text-sm text-ink-muted">Loading timeline…</p>
+        </div>
+      }
+    >
+      <TimelineSlugClient slug={params.slug} />
+    </Suspense>
+  );
 }

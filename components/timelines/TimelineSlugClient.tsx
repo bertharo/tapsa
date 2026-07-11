@@ -2,14 +2,15 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import TimelineExplorer from "./TimelineExplorer";
 import TimelineSearch from "./TimelineSearch";
 import type { TapsaTimeline } from "@/lib/timeline-types";
 import { slugToTitleQuery } from "@/lib/slug";
 
-function prettify(slug: string): string {
-  const s = slugToTitleQuery(slug);
-  return s.charAt(0).toUpperCase() + s.slice(1);
+function displayQuery(q: string): string {
+  const s = q.trim();
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
 }
 
 function TimelineErrorShell({ title, body }: { title: string; body: string }) {
@@ -65,8 +66,10 @@ type LoadState =
   | { status: "error" };
 
 export default function TimelineSlugClient({ slug }: { slug: string }) {
+  const searchParams = useSearchParams();
+  const query = searchParams.get("q")?.trim() || slugToTitleQuery(slug);
   const [state, setState] = useState<LoadState>({ status: "loading" });
-  const displayTitle = prettify(slug);
+  const displayTitle = displayQuery(query);
 
   useEffect(() => {
     let cancelled = false;
@@ -74,9 +77,8 @@ export default function TimelineSlugClient({ slug }: { slug: string }) {
 
     (async () => {
       try {
-        const res = await fetch(`/api/timeline/${encodeURIComponent(slug)}`, {
-          cache: "no-store",
-        });
+        const apiUrl = `/api/timeline/${encodeURIComponent(slug)}?q=${encodeURIComponent(query)}`;
+        const res = await fetch(apiUrl, { cache: "no-store" });
         const data = (await res.json()) as {
           timeline?: TapsaTimeline;
           error?: string;
@@ -101,7 +103,7 @@ export default function TimelineSlugClient({ slug }: { slug: string }) {
     return () => {
       cancelled = true;
     };
-  }, [slug]);
+  }, [slug, query]);
 
   if (state.status === "loading") {
     return <TimelineGeneratingShell title={displayTitle} />;

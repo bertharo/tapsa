@@ -5,15 +5,22 @@ import {
   isTimelineUnavailable,
   isTopicNotFound,
 } from "@/lib/timeline-errors";
+import { slugToTitleQuery } from "@/lib/slug";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
 type Params = { slug: string };
 
-export async function GET(_req: NextRequest, { params }: { params: Params }) {
+export async function GET(req: NextRequest, { params }: { params: Params }) {
+  const q = req.nextUrl.searchParams.get("q");
+  const topic = (q?.trim() || slugToTitleQuery(params.slug)).trim();
+  if (!topic) {
+    return NextResponse.json({ error: "missing_topic" }, { status: 400 });
+  }
+
   try {
-    const result = await getOrCreateTimeline(params.slug);
+    const result = await getOrCreateTimeline(topic);
     return NextResponse.json({ timeline: result.timeline, cacheHit: result.cacheHit });
   } catch (err) {
     if (isTopicNotFound(err)) {
