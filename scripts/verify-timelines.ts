@@ -67,7 +67,9 @@ async function verifyQuery(query: string): Promise<void> {
   console.log(`  topic: ${timeline.wikiTitle}`);
   console.log(`  type: ${timeline.topicType}`);
   console.log(`  events: ${timeline.events.length} (sparse: ${timeline.sparse})`);
-  console.log(`  eras: ${timeline.eras.map((e) => e.name).join(" | ")}`);
+  console.log(`  eras: ${timeline.eras.map((e) => `${e.name}${e.summary ? " ✓" : ""}`).join(" | ")}`);
+  const withTransitions = timeline.events.filter((e) => e.transitionalText).length;
+  if (withTransitions) console.log(`  connective: ${withTransitions} transitional snippets`);
 
   assertOrdered(timeline.events);
   assertNoDuplicates(timeline.events);

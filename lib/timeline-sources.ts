@@ -1,4 +1,5 @@
 import { fetchArticlePlainText, fetchSections, fetchSectionContent } from "./wikipedia";
+import { extractSectionIntro } from "./timeline-eras";
 import { restSummaryByTitle } from "./timeline-wiki";
 import { titleToSlug } from "./slug";
 
@@ -8,11 +9,18 @@ export type ChronologicalSourceKind =
   | "history_section"
   | "main_article";
 
+export type ChronologicalSection = {
+  name: string;
+  index: string;
+  text: string;
+  intro: string;
+};
+
 export type ChronologicalSource = {
   kind: ChronologicalSourceKind;
   articleTitle: string;
   text: string;
-  sections: { name: string; index: string; text: string }[];
+  sections: ChronologicalSection[];
 };
 
 export type ResolvedChronology = {
@@ -23,6 +31,8 @@ export type ResolvedChronology = {
   lead: string;
   sources: ChronologicalSource[];
   mergedText: string;
+  /** Sections from the richest chronological source — used for era periodization. */
+  eraSections: ChronologicalSection[];
 };
 
 const WIKI_ACTION = "https://en.wikipedia.org/w/api.php";
@@ -81,7 +91,7 @@ async function buildSource(
       kind,
       articleTitle,
       text,
-      sections: [{ name: "History", index: historyIdx, text }],
+      sections: [{ name: "History", index: historyIdx, text, intro: extractSectionIntro(text) }],
     };
   }
 
@@ -89,10 +99,17 @@ async function buildSource(
   if (text.length < 120) return null;
 
   const wikiSections = await fetchSections(articleTitle);
-  const sectionTexts: { name: string; index: string; text: string }[] = [];
-  for (const sec of wikiSections.slice(0, 12)) {
+  const sectionTexts: ChronologicalSection[] = [];
+  for (const sec of wikiSections.slice(0, 16)) {
     const { text: st } = await fetchSectionContent(articleTitle, sec.index);
-    if (st.length > 80) sectionTexts.push({ name: sec.line, index: sec.index, text: st });
+    if (st.length > 80) {
+      sectionTexts.push({
+        name: sec.line,
+        index: sec.index,
+        text: st,
+        intro: extractSectionIntro(st),
+      });
+    }
   }
 
   return { kind, articleTitle, text, sections: sectionTexts };
@@ -145,6 +162,11 @@ export async function resolveChronologicalSources(
   const mergedParts = sources.map((s) => `=== ${s.articleTitle} ===\n${s.text}`);
   const mergedText = mergedParts.join("\n\n").slice(0, 48000);
 
+  const eraSource =
+    sources.find((s) => s.kind === "history_article" || s.kind === "timeline_article") ??
+    sources[0];
+  const eraSections = eraSource?.sections ?? [];
+
   return {
     mainTitle,
     mainSlug: titleToSlug(mainTitle),
@@ -153,5 +175,6 @@ export async function resolveChronologicalSources(
     lead: summary?.extract?.trim() ?? "",
     sources,
     mergedText,
+    eraSections,
   };
 }

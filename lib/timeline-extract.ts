@@ -9,7 +9,7 @@ import type {
 } from "./timeline-types";
 import { MIN_TIMELINE_EVENTS, SPARSE_EVENT_THRESHOLD, TIMELINE_SCHEMA_VERSION } from "./timeline-types";
 import { compareParsedDates, parseDateFromText, type ParsedDate } from "./timeline-dates";
-import { clusterEventsIntoEras } from "./timeline-eras";
+import { deriveEras, findEraForSortKey } from "./timeline-eras";
 import { classifyTopicType } from "./timeline-topic-type";
 import { timelineCacheKey } from "./timeline-resolve";
 import { titleToSlug } from "./slug";
@@ -25,6 +25,8 @@ export type RawExtractedEvent = {
   inLead: boolean;
   linkCount: number;
   hasOwnArticle: boolean;
+  sectionName?: string;
+  sectionIntro?: string;
 };
 
 const JUNK_TITLE =
@@ -88,6 +90,7 @@ function extractFromLine(
   line: string,
   defaultWikiTitle: string,
   inLead: boolean,
+  sectionMeta?: { name: string; intro: string },
 ): RawExtractedEvent | null {
   const trimmed = line.trim();
   if (trimmed.length < 12) return null;
@@ -107,6 +110,8 @@ function extractFromLine(
       inLead,
       linkCount: 0,
       hasOwnArticle: false,
+      sectionName: sectionMeta?.name,
+      sectionIntro: sectionMeta?.intro,
     };
   }
 
@@ -124,13 +129,20 @@ function extractFromLine(
       inLead,
       linkCount: 0,
       hasOwnArticle: false,
+      sectionName: sectionMeta?.name,
+      sectionIntro: sectionMeta?.intro,
     };
   }
 
   return null;
 }
 
-function extractInlineSentences(text: string, defaultWikiTitle: string, inLead: boolean): RawExtractedEvent[] {
+function extractInlineSentences(
+  text: string,
+  defaultWikiTitle: string,
+  inLead: boolean,
+  sectionMeta?: { name: string; intro: string },
+): RawExtractedEvent[] {
   const out: RawExtractedEvent[] = [];
   let m: RegExpExecArray | null;
   const re = new RegExp(INLINE_DATE.source, INLINE_DATE.flags);
@@ -148,6 +160,8 @@ function extractInlineSentences(text: string, defaultWikiTitle: string, inLead: 
       inLead,
       linkCount: 0,
       hasOwnArticle: false,
+      sectionName: sectionMeta?.name,
+      sectionIntro: sectionMeta?.intro,
     });
   }
   return out;
@@ -159,16 +173,23 @@ function extractFromSource(
 ): RawExtractedEvent[] {
   const defaultWiki = source.articleTitle.replace(/ /g, "_");
   const events: RawExtractedEvent[] = [];
-  const chunks = [source.text, ...source.sections.map((s) => s.text)];
 
-  for (const chunk of chunks) {
-    const inLead = leadText.length > 0 && chunk.slice(0, 200) === leadText.slice(0, 200);
-    const lines = chunk.split(/\n+/);
+  const leadChunk = source.text;
+  const inLeadRoot = leadText.length > 0 && leadChunk.slice(0, 200) === leadText.slice(0, 200);
+  for (const line of leadChunk.split(/\n+/)) {
+    const ev = extractFromLine(line, defaultWiki, inLeadRoot);
+    if (ev) events.push(ev);
+  }
+  events.push(...extractInlineSentences(leadChunk, defaultWiki, inLeadRoot));
+
+  for (const section of source.sections) {
+    const meta = { name: section.name, intro: section.intro };
+    const lines = section.text.split(/\n+/);
     for (const line of lines) {
-      const ev = extractFromLine(line, defaultWiki, inLead);
+      const ev = extractFromLine(line, defaultWiki, false, meta);
       if (ev) events.push(ev);
     }
-    events.push(...extractInlineSentences(chunk, defaultWiki, inLead));
+    events.push(...extractInlineSentences(section.text, defaultWiki, false, meta));
   }
 
   return events;
@@ -214,18 +235,42 @@ function assignTiers(events: RawExtractedEvent[]): Map<RawExtractedEvent, EventT
   return tiers;
 }
 
+function transitionalTextFor(
+  ev: RawExtractedEvent,
+  prevLandmark: RawExtractedEvent | null,
+  eraId: string,
+  prevEraId: string | null,
+): string | undefined {
+  if (!prevLandmark || eraId !== prevEraId) return undefined;
+  const intro = ev.sectionIntro?.trim();
+  if (!intro || intro.length < 20) return undefined;
+  if (normalizeTitle(intro) === normalizeTitle(ev.oneLiner)) return undefined;
+  if (normalizeTitle(intro) === normalizeTitle(prevLandmark.oneLiner)) return undefined;
+  return intro.slice(0, 220);
+}
+
 function toTimelineEvents(
   raw: RawExtractedEvent[],
   eras: TimelineEra[],
   tiers: Map<RawExtractedEvent, EventTier>,
 ): TimelineEvent[] {
-  return raw.map((ev) => {
-    const era =
-      eras.find((e) => ev.date.sortKey >= e.start && ev.date.sortKey <= e.end) ?? eras[0];
+  const events: TimelineEvent[] = [];
+  let prevLandmark: RawExtractedEvent | null = null;
+  let prevEraId: string | null = null;
+
+  for (const ev of raw) {
+    const era = findEraForSortKey(eras, ev.date.sortKey);
+    const tier = tiers.get(ev) ?? "context";
     const wikiTitle = ev.wikiTitle.replace(/ /g, "_");
     const slug = titleToSlug(wikiTitle.replace(/_/g, " "));
     const title = ev.title;
-    return {
+
+    const transitionalText =
+      tier === "landmark"
+        ? transitionalTextFor(ev, prevLandmark, era.id, prevEraId)
+        : undefined;
+
+    events.push({
       id: `evt-${ev.date.sortKey}-${slug}-${normalizeTitle(title).slice(0, 24)}`,
       yearDisplay: ev.date.display,
       yearSort: ev.date.sortKey,
@@ -235,13 +280,21 @@ function toTimelineEvents(
       oneLiner: ev.oneLiner,
       body: ev.body,
       category: inferCategory(ev.body),
-      eraId: era?.id ?? "era-1",
-      tier: tiers.get(ev) ?? "context",
+      eraId: era.id,
+      tier,
+      transitionalText,
       wikiTitle,
       wikipediaSlug: slug,
       image: null,
-    };
-  });
+    });
+
+    if (tier === "landmark") {
+      prevLandmark = ev;
+      prevEraId = era.id;
+    }
+  }
+
+  return events;
 }
 
 async function pickAdjacentTopics(
@@ -283,10 +336,21 @@ export async function extractTimelineFromSources(
     throw new Error("No dateable events extracted.");
   }
 
-  const eras = clusterEventsIntoEras(
-    raw.map((e) => ({ sortKey: e.date.sortKey, precision: e.date.precision })),
+  const eventPoints = raw.map((e) => ({
+    sortKey: e.date.sortKey,
+    precision: e.date.precision,
+    sectionName: e.sectionName,
+  }));
+
+  const eras = deriveEras({
+    sections: chronology.eraSections.map((s) => ({
+      name: s.name,
+      text: s.text,
+      intro: s.intro,
+    })),
+    events: eventPoints,
     topicType,
-  );
+  });
   const tiers = assignTiers(raw);
   const events = toTimelineEvents(raw, eras, tiers);
 

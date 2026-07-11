@@ -1,6 +1,17 @@
 import type { DatePrecision, TimelineEra, TopicType } from "./timeline-types";
+import { parseDateFromText } from "./timeline-dates";
 
-type EventPoint = { sortKey: number; precision: DatePrecision };
+export type EventPoint = {
+  sortKey: number;
+  precision: DatePrecision;
+  sectionName?: string;
+};
+
+export type SectionBlock = {
+  name: string;
+  text: string;
+  intro: string;
+};
 
 function eraLabel(start: number, end: number, topicType: TopicType): string {
   const span = end - start;
@@ -40,6 +51,119 @@ function fallbackName(index: number, total: number, topicType: TopicType): strin
   if (index === 0) return "Origins";
   if (index === total - 1) return "Modern era";
   return "Development";
+}
+
+function cleanHeading(name: string): string {
+  return name
+    .replace(/\s*\([^)]*\)\s*$/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** First sentence of a section body — connective tissue source. */
+export function extractSectionIntro(text: string): string {
+  const para = text.split(/\n+/).find((p) => p.trim().length > 20) ?? text;
+  const sentence = para.match(/^[^.!?]+[.!?]/)?.[0] ?? para.slice(0, 160);
+  return sentence.trim();
+}
+
+function headingSortKey(heading: string, sectionText: string): number | null {
+  const fromParen = heading.match(/\(([^)]+)\)/);
+  const candidates = [heading, fromParen?.[1] ?? ""].filter(Boolean);
+  for (const c of candidates) {
+    const d = parseDateFromText(c);
+    if (d) return d.sortKey;
+  }
+  const fromText = parseDateFromText(sectionText.slice(0, 300));
+  return fromText?.sortKey ?? null;
+}
+
+/**
+ * True when section order aligns with event chronology — headings work as chapters.
+ */
+export function sectionsFormChronologicalChapters(
+  sections: SectionBlock[],
+  events: EventPoint[],
+): boolean {
+  const withEvents = sections
+    .map((s, order) => ({
+      order,
+      name: s.name,
+      events: events.filter((e) => e.sectionName === s.name),
+      headingKey: headingSortKey(s.name, s.text),
+    }))
+    .filter((s) => s.events.length > 0);
+
+  if (withEvents.length < 2) return false;
+
+  let lastAnchor = -Infinity;
+  for (const sec of withEvents) {
+    const minEvent = Math.min(...sec.events.map((e) => e.sortKey));
+    const anchor = sec.headingKey ?? minEvent;
+    if (anchor < lastAnchor - 150) return false;
+    lastAnchor = Math.max(anchor, minEvent);
+  }
+
+  const datedHeadings = withEvents.filter((s) => s.headingKey !== null).length;
+  if (datedHeadings >= Math.ceil(withEvents.length * 0.4)) return true;
+
+  let lastMin = -Infinity;
+  for (const sec of withEvents) {
+    const minDate = Math.min(...sec.events.map((e) => e.sortKey));
+    if (minDate < lastMin - 100) return false;
+    lastMin = minDate;
+  }
+  return true;
+}
+
+function buildErasFromSections(
+  sections: SectionBlock[],
+  events: EventPoint[],
+): TimelineEra[] {
+  const eras: TimelineEra[] = [];
+  let eraIndex = 0;
+  const usedNames = new Set<string>();
+
+  for (const sec of sections) {
+    const secEvents = events.filter((e) => e.sectionName === sec.name);
+    if (!secEvents.length) continue;
+
+    eraIndex += 1;
+    const start = Math.min(...secEvents.map((e) => e.sortKey));
+    const end = Math.max(...secEvents.map((e) => e.sortKey));
+    let name = cleanHeading(sec.name);
+    if (usedNames.has(name)) name = `${name} (${start})`;
+    usedNames.add(name);
+
+    eras.push({
+      id: `era-${eraIndex}`,
+      name,
+      start,
+      end,
+      summary: sec.intro || undefined,
+    });
+  }
+
+  const assigned = new Set(events.filter((e) => e.sectionName).map((e) => e.sectionName));
+  const orphanEvents = events.filter((e) => !e.sectionName || !assigned.has(e.sectionName));
+  if (orphanEvents.length && eras.length) {
+    for (const ev of orphanEvents) {
+      const era =
+        eras.find((e) => ev.sortKey >= e.start && ev.sortKey <= e.end) ??
+        eras.reduce((best, e) => {
+          const dist = Math.min(Math.abs(ev.sortKey - e.start), Math.abs(ev.sortKey - e.end));
+          const bestDist = Math.min(
+            Math.abs(ev.sortKey - best.start),
+            Math.abs(ev.sortKey - best.end),
+          );
+          return dist < bestDist ? e : best;
+        });
+      era.start = Math.min(era.start, ev.sortKey);
+      era.end = Math.max(era.end, ev.sortKey);
+    }
+  }
+
+  return eras.length ? eras : clusterEventsIntoEras(events, "CONCEPT");
 }
 
 /**
@@ -105,4 +229,29 @@ export function clusterEventsIntoEras(
   }
 
   return eras;
+}
+
+export type EraBuildInput = {
+  sections: SectionBlock[];
+  events: EventPoint[];
+  topicType: TopicType;
+};
+
+/** Prefer section headings as era chapters; fall back to density clustering. */
+export function deriveEras(input: EraBuildInput): TimelineEra[] {
+  const { sections, events, topicType } = input;
+  if (sections.length >= 2 && sectionsFormChronologicalChapters(sections, events)) {
+    return buildErasFromSections(sections, events);
+  }
+  return clusterEventsIntoEras(events, topicType);
+}
+
+export function findEraForSortKey(eras: TimelineEra[], sortKey: number): TimelineEra {
+  const direct = eras.find((e) => sortKey >= e.start && sortKey <= e.end);
+  if (direct) return direct;
+  return eras.reduce((best, e) => {
+    const dist = Math.min(Math.abs(sortKey - e.start), Math.abs(sortKey - e.end));
+    const bestDist = Math.min(Math.abs(sortKey - best.start), Math.abs(sortKey - best.end));
+    return dist < bestDist ? e : best;
+  });
 }

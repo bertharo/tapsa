@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { compareParsedDates, parseDateFromText } from "../lib/timeline-dates";
 import { dedupeEvents, type RawExtractedEvent } from "../lib/timeline-extract";
-import { clusterEventsIntoEras } from "../lib/timeline-eras";
+import { clusterEventsIntoEras, deriveEras, sectionsFormChronologicalChapters } from "../lib/timeline-eras";
 import { gateImage } from "../lib/timeline-images-gate";
 
 function testDates() {
@@ -47,6 +47,20 @@ function testEras() {
   }));
   const eras = clusterEventsIntoEras(points, "CONCEPT");
   assert.ok(eras.length >= 3);
+
+  const sections = [
+    { name: "Early life", text: "In 69 BC she was born.", intro: "Formative years." },
+    { name: "Reign", text: "In 51 BC she became queen.", intro: "Rule began." },
+  ];
+  const events = [
+    { sortKey: -69, precision: "year" as const, sectionName: "Early life" },
+    { sortKey: -51, precision: "year" as const, sectionName: "Reign" },
+    { sortKey: -30, precision: "year" as const, sectionName: "Reign" },
+  ];
+  assert.ok(sectionsFormChronologicalChapters(sections, events));
+  const derived = deriveEras({ sections, events, topicType: "PERSON" });
+  assert.equal(derived[0]?.name, "Early life");
+  assert.ok(derived[0]?.summary);
 }
 
 function testImages() {
