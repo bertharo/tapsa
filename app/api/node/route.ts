@@ -43,7 +43,14 @@ export async function GET(req: NextRequest) {
     const { node, cacheHit } = await getOrCreateNode(slug, domain);
     return NextResponse.json(
       { node, cacheHit },
-      { headers: { "x-tapsa-cache": cacheHit ? "hit" : "miss" } },
+      {
+        headers: {
+          "x-tapsa-cache": cacheHit ? "hit" : "miss",
+          "Cache-Control": cacheHit
+            ? "public, s-maxage=86400, stale-while-revalidate=604800"
+            : "public, s-maxage=3600, stale-while-revalidate=86400",
+        },
+      },
     );
   } catch (err) {
     if (err instanceof TopicNotFoundError) {

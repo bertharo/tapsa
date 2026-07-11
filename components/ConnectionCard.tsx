@@ -22,6 +22,7 @@ export default function ConnectionCard({
   target,
   anchorIsKnown,
   onTravel,
+  onPrefetch,
 }: {
   anchorSlug: string;
   anchorTitle: string;
@@ -29,6 +30,7 @@ export default function ConnectionCard({
   target: Connection;
   anchorIsKnown: boolean;
   onTravel: (conn: Connection) => void;
+  onPrefetch?: (slug: string) => void;
 }) {
   const [revealed, setRevealed] = useState(false);
   const [picked, setPicked] = useState<RelationshipType | null>(null);
@@ -175,6 +177,7 @@ export default function ConnectionCard({
             <button
               type="button"
               onClick={() => onTravel(target)}
+              onMouseEnter={() => onPrefetch?.(target.slug)}
               className="flex-1 rounded-xl border border-ink/10 bg-white px-4 py-2.5 text-sm font-medium text-ink-soft shadow-sm transition hover:border-accent/40 hover:text-ink"
             >
               Travel to {target.title} →

@@ -23,20 +23,19 @@ export async function generateMetadata({
   params: Params;
   searchParams: Search;
 }): Promise<Metadata> {
-  try {
-    const { node } = await getOrCreateNode(params.slug);
-    const site = getSiteUrl();
-    const canonical = `${site}/topic/${encodeURIComponent(node.slug)}`;
+  const site = getSiteUrl();
+  const canonical = `${site}/topic/${encodeURIComponent(params.slug)}`;
 
-    // Shared connection card: preview Anchor — [relationship] — Target.
+  try {
+    const peeked = await peekNode(params.slug);
     const from = typeof searchParams.from === "string" ? searchParams.from : undefined;
-    if (from) {
+    if (from && peeked) {
       const anchor = await peekNode(from);
-      const conn = anchor?.connections.find((c) => c.slug === node.slug);
+      const conn = anchor?.connections.find((c) => c.slug === peeked.slug);
       if (anchor && conn) {
         const rel = conn.relationship ?? "connects to";
-        const title = `${anchor.title} ${rel} ${node.title}`;
-        const ogUrl = `${site}/api/og?anchor=${encodeURIComponent(anchor.slug)}&target=${encodeURIComponent(node.slug)}`;
+        const title = `${anchor.title} ${rel} ${peeked.title}`;
+        const ogUrl = `${site}/api/og?anchor=${encodeURIComponent(anchor.slug)}&target=${encodeURIComponent(peeked.slug)}`;
         return {
           title,
           description: conn.rationale,
@@ -58,28 +57,33 @@ export async function generateMetadata({
       }
     }
 
-    const ogUrl = `${site}/api/og?slug=${encodeURIComponent(node.slug)}`;
-    return {
-      title: node.title,
-      description: node.summary,
-      alternates: { canonical },
-      openGraph: {
-        title: `${node.title} · Tapsa`,
-        description: node.summary,
-        url: canonical,
-        images: [{ url: ogUrl, width: 1200, height: 630 }],
-        type: "article",
-      },
-      twitter: {
-        card: "summary_large_image",
-        title: `${node.title} · Tapsa`,
-        description: node.summary,
-        images: [ogUrl],
-      },
-    };
+    if (peeked) {
+      const ogUrl = `${site}/api/og?slug=${encodeURIComponent(peeked.slug)}`;
+      return {
+        title: peeked.title,
+        description: peeked.summary,
+        alternates: { canonical },
+        openGraph: {
+          title: `${peeked.title} · Tapsa`,
+          description: peeked.summary,
+          url: canonical,
+          images: [{ url: ogUrl, width: 1200, height: 630 }],
+          type: "article",
+        },
+        twitter: {
+          card: "summary_large_image",
+          title: `${peeked.title} · Tapsa`,
+          description: peeked.summary,
+          images: [ogUrl],
+        },
+      };
+    }
   } catch {
-    return { title: prettify(params.slug) };
+    /* fall through to slug-based title */
   }
+
+  const fallbackTitle = prettify(params.slug);
+  return { title: fallbackTitle, alternates: { canonical } };
 }
 
 export default async function TopicPage({

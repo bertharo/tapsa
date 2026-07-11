@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import type { Connection, TapsaNode } from "@/lib/types";
@@ -8,18 +8,37 @@ import GraphView from "./GraphView";
 import ReadingView from "./ReadingView";
 import Breadcrumb, { type Crumb } from "./Breadcrumb";
 import { buildShareUrl } from "@/lib/trail";
+import { getNodeClientCache } from "@/lib/node-client-cache";
+import { shellNodeFromConnection } from "@/lib/node-shell";
+import { markNodeClick, markNodeFirstPaint, markNodeHydrated } from "@/lib/node-perf";
+import { isNodeWarmed, markNodeWarmed, prefetchNode } from "@/lib/node-prefetch";
 
 type FetchState = { node?: TapsaNode; error?: string };
 type ViewMode = "read" | "explore";
 
+const nodeCache = getNodeClientCache();
+const inflightFetches = new Map<string, Promise<FetchState>>();
+
 async function fetchNode(slug: string): Promise<FetchState> {
+  const existing = inflightFetches.get(slug);
+  if (existing) return existing;
+
+  const promise = (async () => {
+    try {
+      const res = await fetch(`/api/node?slug=${encodeURIComponent(slug)}`);
+      const data = await res.json();
+      if (!res.ok) return { error: data?.error ?? "Could not load that topic." };
+      return { node: data.node as TapsaNode };
+    } catch {
+      return { error: "Network hiccup. Try again." };
+    }
+  })();
+
+  inflightFetches.set(slug, promise);
   try {
-    const res = await fetch(`/api/node?slug=${encodeURIComponent(slug)}`);
-    const data = await res.json();
-    if (!res.ok) return { error: data?.error ?? "Could not load that topic." };
-    return { node: data.node as TapsaNode };
-  } catch {
-    return { error: "Network hiccup. Try again." };
+    return await promise;
+  } finally {
+    inflightFetches.delete(slug);
   }
 }
 
@@ -30,9 +49,9 @@ export default function Explorer({
   initialNode: TapsaNode;
   initialCrumbs: Crumb[];
 }) {
-  const cacheRef = useRef<Map<string, TapsaNode>>(
-    new Map([[initialNode.slug, initialNode]]),
-  );
+  nodeCache.seed(initialNode);
+
+  const travelGeneration = useRef(0);
   const [crumbs, setCrumbs] = useState<Crumb[]>(
     initialCrumbs.length ? initialCrumbs : [{ slug: initialNode.slug, title: initialNode.title }],
   );
@@ -40,11 +59,10 @@ export default function Explorer({
     (initialCrumbs.length || 1) - 1,
   );
   const [currentNode, setCurrentNode] = useState<TapsaNode>(initialNode);
+  const [hydratingSlug, setHydratingSlug] = useState<string | null>(null);
   const [loadingSlug, setLoadingSlug] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  // Reading-first: every topic opens as a readable summary; the graph of
-  // connections is revealed only when the user chooses to explore.
   const [mode, setMode] = useState<ViewMode>("read");
 
   const syncUrl = useCallback((slug: string, trailSlugs: string[]) => {
@@ -53,39 +71,116 @@ export default function Explorer({
     window.history.replaceState(null, "", url.replace(window.location.origin, ""));
   }, []);
 
-  const travel = useCallback(
-    async (conn: Connection) => {
-      if (loadingSlug) return;
-      setError(null);
-      setLoadingSlug(conn.slug);
-
-      let node = cacheRef.current.get(conn.slug);
-      if (!node) {
-        const result = await fetchNode(conn.slug);
-        if (result.error || !result.node) {
-          setError(result.error ?? "Could not load that topic.");
-          setLoadingSlug(null);
-          return;
-        }
-        node = result.node;
-        cacheRef.current.set(node.slug, node);
-        cacheRef.current.set(conn.slug, node);
-      }
-
-      const resolved = node;
+  const pushTravel = useCallback(
+    (node: TapsaNode) => {
       setCrumbs((prev) => {
         const trimmed = prev.slice(0, currentIndex + 1);
-        const next = [...trimmed, { slug: resolved.slug, title: resolved.title }];
-        syncUrl(resolved.slug, next.map((c) => c.slug));
+        const next = [...trimmed, { slug: node.slug, title: node.title }];
+        syncUrl(node.slug, next.map((c) => c.slug));
         return next;
       });
       setCurrentIndex((i) => i + 1);
-      setCurrentNode(resolved);
+      setCurrentNode(node);
       setMode("read");
-      setLoadingSlug(null);
     },
-    [currentIndex, loadingSlug, syncUrl],
+    [currentIndex, syncUrl],
   );
+
+  const hydrateTravel = useCallback(
+    (conn: Connection, node: TapsaNode, source: string, gen: number) => {
+      if (gen !== travelGeneration.current) return;
+      nodeCache.set(node);
+      markNodeWarmed(node.slug);
+      setCurrentNode(node);
+      setCrumbs((prev) => {
+        const next = [...prev];
+        const last = next[next.length - 1];
+        if (last && (last.slug === conn.slug || last.slug === node.slug)) {
+          next[next.length - 1] = { slug: node.slug, title: node.title };
+        }
+        syncUrl(node.slug, next.map((c) => c.slug));
+        return next;
+      });
+      setHydratingSlug(null);
+      setLoadingSlug(null);
+      markNodeHydrated(conn.slug, source);
+    },
+    [syncUrl],
+  );
+
+  const travel = useCallback(
+    async (conn: Connection) => {
+      const gen = ++travelGeneration.current;
+      markNodeClick(conn.slug);
+      setError(null);
+
+      const cached = nodeCache.getSync(conn.slug);
+      if (cached) {
+        markNodeFirstPaint(conn.slug);
+        pushTravel(cached);
+        markNodeHydrated(conn.slug, "memory");
+        return;
+      }
+
+      setHydratingSlug(conn.slug);
+      setLoadingSlug(conn.slug);
+      pushTravel(shellNodeFromConnection(conn));
+      markNodeFirstPaint(conn.slug);
+
+      const idb = await nodeCache.get(conn.slug);
+      if (idb) {
+        hydrateTravel(conn, idb, "indexeddb", gen);
+        return;
+      }
+
+      const prefetched = nodeCache.getSync(conn.slug);
+      if (prefetched) {
+        hydrateTravel(conn, prefetched, "prefetch", gen);
+        return;
+      }
+
+      const result = await fetchNode(conn.slug);
+      if (gen !== travelGeneration.current) return;
+      if (result.error || !result.node) {
+        setError(result.error ?? "Could not load that topic.");
+        setHydratingSlug(null);
+        setLoadingSlug(null);
+        return;
+      }
+      hydrateTravel(conn, result.node, "network", gen);
+    },
+    [hydrateTravel, pushTravel],
+  );
+
+  const warmNode = useCallback(async (slug: string) => {
+    if (nodeCache.getSync(slug) || isNodeWarmed(slug)) {
+      markNodeWarmed(slug);
+      return;
+    }
+    const idb = await nodeCache.get(slug);
+    if (idb) {
+      markNodeWarmed(slug);
+      return;
+    }
+    const result = await fetchNode(slug);
+    if (result.node) {
+      nodeCache.set(result.node);
+      markNodeWarmed(slug);
+    }
+  }, []);
+
+  const prefetchConnection = useCallback(
+    (slug: string) => {
+      prefetchNode(slug, warmNode);
+    },
+    [warmNode],
+  );
+
+  useEffect(() => {
+    for (const conn of currentNode.connections) {
+      prefetchConnection(conn.slug);
+    }
+  }, [currentNode.slug, currentNode.connections, prefetchConnection]);
 
   const jump = useCallback(
     async (index: number) => {
@@ -93,23 +188,33 @@ export default function Explorer({
       const target = crumbs[index];
       if (!target) return;
       setError(null);
+      const gen = ++travelGeneration.current;
 
-      let node = cacheRef.current.get(target.slug);
+      let node: TapsaNode | null = nodeCache.getSync(target.slug);
       if (!node) {
         setLoadingSlug(target.slug);
+        setHydratingSlug(target.slug);
+        node = await nodeCache.get(target.slug);
+      }
+      if (!node) {
         const result = await fetchNode(target.slug);
+        if (gen !== travelGeneration.current) return;
         if (result.error || !result.node) {
           setError(result.error ?? "Could not reload that node.");
           setLoadingSlug(null);
+          setHydratingSlug(null);
           return;
         }
         node = result.node;
-        cacheRef.current.set(node.slug, node);
-        setLoadingSlug(null);
+        nodeCache.set(node);
       }
+
+      if (gen !== travelGeneration.current) return;
       setCurrentIndex(index);
       setCurrentNode(node);
       setMode("read");
+      setLoadingSlug(null);
+      setHydratingSlug(null);
       syncUrl(target.slug, crumbs.slice(0, index + 1).map((c) => c.slug));
     },
     [crumbs, currentIndex, loadingSlug, syncUrl],
@@ -136,6 +241,7 @@ export default function Explorer({
   }, [crumbs, currentIndex, currentNode]);
 
   const depth = useMemo(() => currentIndex + 1, [currentIndex]);
+  const isHydrating = hydratingSlug === currentNode.slug;
 
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-4xl flex-col px-4 pb-10 pt-4 md:px-6">
@@ -192,8 +298,10 @@ export default function Explorer({
         {mode === "read" ? (
           <ReadingView
             node={currentNode}
+            hydrating={isHydrating}
             onTravel={travel}
             onExplore={() => setMode("explore")}
+            onPrefetch={prefetchConnection}
           />
         ) : (
           <GraphView
@@ -201,6 +309,7 @@ export default function Explorer({
             loadingSlug={loadingSlug}
             onTravel={travel}
             onRead={() => setMode("read")}
+            onPrefetch={prefetchConnection}
           />
         )}
       </div>

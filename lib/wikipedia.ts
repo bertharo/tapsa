@@ -144,7 +144,7 @@ type ActionLinksResponse = {
 async function fetchOutgoingLinks(title: string, maxLinks = 1500): Promise<CandidateLink[]> {
   const links: CandidateLink[] = [];
   let plcontinue: string | undefined;
-  for (let page = 0; page < 4 && links.length < maxLinks; page++) {
+  for (let page = 0; page < 2 && links.length < maxLinks; page++) {
     const params = new URLSearchParams({
       action: "query",
       format: "json",
@@ -397,17 +397,14 @@ export async function fetchGrounding(slug: string): Promise<Grounding> {
   const canonicalTitle = summary.title;
   const canonicalSlug = titleToSlug(canonicalTitle);
 
-  const [intro, morelike, related, outgoing, lead] = await Promise.all([
+  const [intro, morelike, related, outgoing] = await Promise.all([
     fetchIntroLinks(canonicalTitle),
     fetchMoreLike(canonicalTitle),
     fetchRelated(canonicalTitle),
     fetchOutgoingLinks(canonicalTitle),
-    fetchLeadExtract(canonicalTitle),
   ]);
 
-  // The broad outgoing set is cleaned, then re-ordered by popularity so famous
-  // linked topics (Michael Jordan from NBA) rise above niche stubs.
-  const cleanedOutgoing = dedupeAndClean(outgoing, canonicalSlug).slice(0, 400);
+  const cleanedOutgoing = dedupeAndClean(outgoing, canonicalSlug).slice(0, 200);
   const popularOutgoing = await rankByPageviews(cleanedOutgoing);
 
   // Quality order: the article's own intro links (editorially important) and
@@ -429,8 +426,7 @@ export async function fetchGrounding(slug: string): Promise<Grounding> {
     slug: canonicalSlug,
     title: canonicalTitle,
     summary: summary.extract,
-    // Prefer the fuller lead; fall back to the short extract for the reading view.
-    lead: lead || summary.extract,
+    lead: summary.extract,
     sourceUrl,
     candidates,
   };

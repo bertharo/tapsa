@@ -5,6 +5,7 @@ import type { Connection, TapsaNode } from "@/lib/types";
 import { pickPredictPair } from "@/lib/familiarity";
 import ConnectionCard from "./ConnectionCard";
 import { useFamiliarity } from "./useFamiliarity";
+import { ConnectionGridSkeleton, SummarySkeleton } from "./NodeSkeleton";
 
 /**
  * Reading-first view of a node: you land here when you travel to a topic, read
@@ -15,12 +16,16 @@ import { useFamiliarity } from "./useFamiliarity";
  */
 export default function ReadingView({
   node,
+  hydrating = false,
   onTravel,
   onExplore,
+  onPrefetch,
 }: {
   node: TapsaNode;
+  hydrating?: boolean;
   onTravel: (conn: Connection) => void;
   onExplore: () => void;
+  onPrefetch?: (slug: string) => void;
 }) {
   const { known, toggleKnown } = useFamiliarity();
   const anchorKnown = known.has(node.slug);
@@ -58,10 +63,11 @@ export default function ReadingView({
           {node.title}
         </h1>
 
-        {/* Tight LLM teaser — shown once. */}
-        <p className="mt-4 font-serif text-lg leading-relaxed text-ink-soft">
-          {node.summary}
-        </p>
+        {hydrating && node.connections.length === 0 ? (
+          <SummarySkeleton />
+        ) : (
+          <p className="mt-4 font-serif text-lg leading-relaxed text-ink-soft">{node.summary}</p>
+        )}
 
         <div className="mt-5 flex flex-wrap items-center gap-x-4 gap-y-2">
           {/* Mark the anchor: what you already know grounds the predict cards. */}
@@ -93,11 +99,15 @@ export default function ReadingView({
       </div>
 
       {/* Go deeper: RELATED ARTICLES (the node's connections) as tappable cards. */}
-      {node.connections.length > 0 && (
+      {node.connections.length > 0 || hydrating ? (
         <div className="mt-6">
           <div className="mb-3 flex items-center justify-between gap-3 px-1">
             <h2 className="text-xs font-semibold uppercase tracking-[0.14em] text-ink-muted">
-              {pair ? "Make the connection" : "Go deeper"}
+              {hydrating && node.connections.length === 0
+                ? "Finding connections…"
+                : pair
+                  ? "Make the connection"
+                  : "Go deeper"}
             </h2>
             <button
               type="button"
@@ -110,7 +120,7 @@ export default function ReadingView({
           </div>
 
           {/* Featured predict → reveal → elaborate card for the best pairing. */}
-          {pair && (
+          {pair && !hydrating && (
             <ConnectionCard
               anchorSlug={node.slug}
               anchorTitle={node.title}
@@ -118,10 +128,14 @@ export default function ReadingView({
               target={pair.target}
               anchorIsKnown={pair.anchorIsKnown}
               onTravel={onTravel}
+              onPrefetch={onPrefetch}
             />
           )}
 
-          {otherConnections.length > 0 && (
+          {hydrating && node.connections.length === 0 ? (
+            <ConnectionGridSkeleton count={4} />
+          ) : (
+            otherConnections.length > 0 && (
             <>
               {pair && (
                 <p className="mb-2 mt-5 px-1 text-[11px] font-medium uppercase tracking-[0.14em] text-ink-faint">
@@ -134,6 +148,7 @@ export default function ReadingView({
                     key={c.slug}
                     type="button"
                     onClick={() => onTravel(c)}
+                    onMouseEnter={() => onPrefetch?.(c.slug)}
                     className={`rounded-2xl border bg-white p-4 text-left shadow-node transition hover:-translate-y-0.5 hover:shadow-glow ${
                       c.surprising
                         ? "surprising-glow border-accent/40"
@@ -160,9 +175,10 @@ export default function ReadingView({
                 ))}
               </div>
             </>
+            )
           )}
         </div>
-      )}
+      ) : null}
     </motion.article>
   );
 }

@@ -43,11 +43,13 @@ export default function GraphView({
   loadingSlug,
   onTravel,
   onRead,
+  onPrefetch,
 }: {
   node: TapsaNode;
   loadingSlug: string | null;
   onTravel: (conn: Connection) => void;
   onRead?: () => void;
+  onPrefetch?: (slug: string) => void;
 }) {
   const isMobile = useIsMobile();
   const connections = node.connections;
@@ -59,6 +61,7 @@ export default function GraphView({
         loadingSlug={loadingSlug}
         onTravel={onTravel}
         onRead={onRead}
+        onPrefetch={onPrefetch}
       />
     );
   }
@@ -115,6 +118,7 @@ export default function GraphView({
               position={orbitPosition(i, connections.length)}
               loading={loadingSlug === c.slug}
               onTravel={onTravel}
+              onPrefetch={onPrefetch}
             />
           ))}
         </AnimatePresence>
@@ -151,11 +155,13 @@ function OrbitNode({
   position,
   loading,
   onTravel,
+  onPrefetch,
 }: {
   conn: Connection;
   position: { left: number; top: number };
   loading: boolean;
   onTravel: (conn: Connection) => void;
+  onPrefetch?: (slug: string) => void;
 }) {
   const movedRef = useRef(false);
   return (
@@ -193,6 +199,7 @@ function OrbitNode({
             }
             onTravel(conn);
           }}
+          onMouseEnter={() => onPrefetch?.(conn.slug)}
           className="block w-full text-left"
         >
           <OrbitCard conn={conn} loading={loading} />
@@ -267,11 +274,13 @@ function MobileList({
   loadingSlug,
   onTravel,
   onRead,
+  onPrefetch,
 }: {
   node: TapsaNode;
   loadingSlug: string | null;
   onTravel: (conn: Connection) => void;
   onRead?: () => void;
+  onPrefetch?: (slug: string) => void;
 }) {
   return (
     <div className="mx-auto w-full max-w-md">
@@ -300,6 +309,7 @@ function MobileList({
           <button
             key={c.slug}
             onClick={() => onTravel(c)}
+            onMouseEnter={() => onPrefetch?.(c.slug)}
             className="block w-full text-left"
           >
             <OrbitCard conn={c} loading={loadingSlug === c.slug} />

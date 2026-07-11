@@ -64,23 +64,6 @@ export async function getOrCreateNode(
   ]);
   node.domain = domain;
 
-  // Attach top-level drill-down sections so users can "go deeper".
-  try {
-    const sections = await fetchSections(grounding.title);
-    node.sections = sections
-      .filter((s) => s.toclevel === 1)
-      .slice(0, MAX_SECTIONS)
-      .map(
-        (s): SectionRef => ({
-          slug: makeSectionSlug(node.slug, s.line),
-          title: s.line,
-        }),
-      );
-  } catch (err) {
-    console.error("[tapsa] section listing failed:", err);
-    node.sections = [];
-  }
-
   await store.set(node);
 
   recordNodeEvent({
